@@ -1,0 +1,6 @@
+pytest>=8.0
+requests>=2.31
+cryptography>=42.0
+fastapi>=0.110
+sqlite-utils>=3.35
+reportlab>=4.0.0

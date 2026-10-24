@@ -1,0 +1,58 @@
+{
+  "profiles": {
+    "26k": {
+      "nombre": "26k",
+      "cuentas_registradas_max": 26000,
+      "concurrentes_max": 650,
+      "votos_por_segundo_max": 52,
+      "lecturas_por_segundo_max": 130,
+      "cola_max": 520,
+      "reserva_capacidad_voto_pct": 30,
+      "rate_limit_por_cuenta_por_min": 120,
+      "hardware_referencia": "1 vCPU / 2GB RAM / SSD",
+      "estado": "hipotesis_pendiente_de_test_de_carga",
+      "invariantes": {
+        "1_cuenta_1_voto": true,
+        "doble_voto_bloqueado": true,
+        "firma_ec_secp256k1_unica": true,
+        "aval_cruzado_cp": true
+      }
+    },
+    "100k": {
+      "nombre": "100k",
+      "cuentas_registradas_max": 100000,
+      "concurrentes_max": 2500,
+      "votos_por_segundo_max": 200,
+      "lecturas_por_segundo_max": 500,
+      "cola_max": 2000,
+      "reserva_capacidad_voto_pct": 30,
+      "rate_limit_por_cuenta_por_min": 120,
+      "hardware_referencia": "4 vCPU / 8GB RAM / SSD NVMe",
+      "estado": "hipotesis_pendiente_de_test_de_carga",
+      "invariantes": {
+        "1_cuenta_1_voto": true,
+        "doble_voto_bloqueado": true,
+        "firma_ec_secp256k1_unica": true,
+        "aval_cruzado_cp": true
+      }
+    },
+    "150k": {
+      "nombre": "150k",
+      "cuentas_registradas_max": 150000,
+      "concurrentes_max": 3750,
+      "votos_por_segundo_max": 300,
+      "lecturas_por_segundo_max": 750,
+      "cola_max": 3000,
+      "reserva_capacidad_voto_pct": 30,
+      "rate_limit_por_cuenta_por_min": 120,
+      "hardware_referencia": "8 vCPU / 16GB RAM / NVMe RAID",
+      "estado": "hipotesis_pendiente_de_test_de_carga",
+      "invariantes": {
+        "1_cuenta_1_voto": true,
+        "doble_voto_bloqueado": true,
+        "firma_ec_secp256k1_unica": true,
+        "aval_cruzado_cp": true
+      }
+    }
+  }
+}
