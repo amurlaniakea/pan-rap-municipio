@@ -1,0 +1,11 @@
+{
+  "name": "blind-schnorr-sandbox",
+  "version": "1.0.0",
+  "description": "Prototipo de Firma Ciega Schnorr sobre ECC para PAN-RAP Municipio",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^2.4.0"
+  }
+}

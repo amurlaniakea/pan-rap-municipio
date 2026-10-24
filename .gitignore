@@ -1,8 +1,22 @@
-.venv
-node_modules
-.next
-panrap.db
-__pycache__
+# Dependencias
+node_modules/
+# Base de datos
+*.db
+*.sqlite
+*.sqlite3
+# Logs
+*.log
+# Variables de entorno
 .env
-*.pyc
-.pytest_cache
+.env.local
+# Build
+dist/
+build/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+# OS
+.DS_Store
+Thumbs.db
