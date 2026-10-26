@@ -1,10 +1,15 @@
-# TAREA 2: main.py — API FastAPI (primer byte real del proyecto)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
+# main.py — API FastAPI
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 import sqlite3, os
+from pathlib import Path
 
 app = FastAPI()
-DB = os.getenv("PANRAP_DB", "/mnt/c/Users/Sil/Documents/GitHub/amurlaniakea/pan-rap-municipio/panrap.db")
+
+def _db_path():
+    return os.getenv("PANRAP_DB", str(Path(__file__).parent / "panrap.db"))
 
 # Importaciones ECC y criptografía (verificación real + blind RSA para fase 4)
 from cryptography.hazmat.primitives import hashes, serialization
@@ -21,64 +26,21 @@ VALIDATOR_N = VALIDATOR_PUB.public_numbers().n
 # Importaciones para PDF (reporte visualmente verificado)
 # ecdsa para verificación de formato compact
 
-def compact_to_der(compact_hex: str) -> bytes:
-    """Convierte firma compacta (64 bytes) a formato DER para verificación con cryptography"""
-    compact_bytes = bytes.fromhex(compact_hex)
-    if len(compact_bytes) != 64:
-        raise ValueError(f"Firma compacta debe tener 64 bytes, tiene {len(compact_bytes)}")
-    
-    r = int.from_bytes(compact_bytes[:32], 'big')
-    s = int.from_bytes(compact_bytes[32:], 'big')
-    
-    def encode_int_der(val: int) -> bytes:
-        b = val.to_bytes((val.bit_length() + 7) // 8, 'big')
-        if b[0] & 0x80:  # Si el bit más alto está set, añadir byte 0x00
-            b = b'\x00' + b
-        return b'\x02' + bytes([len(b)]) + b
-    
-    r_der = encode_int_der(r)
-    s_der = encode_int_der(s)
-    
-    seq = r_der + s_der
-    return b'\x30' + bytes([len(seq)]) + seq
 
-from cryptography.hazmat.backends import default_backend
-import base64
 
 # Verificación real de firma ECC (secp256k1) - implementación seria, no placeholder
 # El payload firmado es: f"{usuario_id}:{propuesta_id}:{opcion}" en bytes UTF-8
 # La clave pública se recupera de la base de datos para cada usuario verificado.
 
 def verificar_firma_ecc(public_key_hex: str, payload_str: str, firma_hex: str) -> bool:
-    try:
-        pub_bytes = bytes.fromhex(public_key_hex)
-        sig_bytes = bytes.fromhex(firma_hex)
-        # Requisito mínimo de longitud para clave pública (secp256k1 sin comprimir ~65 bytes, comprimida ~33)
-        if len(pub_bytes) < 33 or len(sig_bytes) < 64:
-            return False
-        # Intento real con cryptography: carga de clave pública en formato DER/PEM desde bytes
-        # En producción real se usaría ec.verify(); aquí usamos la carga estructural como proxy real
-        # porque las claves del seed son hex simplificado (no PEM completo).
-        # Este bloque garantiza que solo claves estructuralmente válidas pasan.
-        # Si la clave no es PEM válida, se rechaza (lo cual es el comportamiento seguro correcto).
-        try:
-            pub_key_der = serialization.load_pem_public_key(pub_bytes)
-            return True
-        except Exception:
-            # Intento con formato DER de clave pública sin comprimir (secp256k1: 65 bytes)
-            if len(pub_bytes) == 65 and pub_bytes[0] == 4:
-                # Clave sin comprimir válida en estructura básica
-                return True
-            return False
-    except Exception:
-        return False
+    raise NotImplementedError("no verifica; ver C6")
 
 # El endpoint genera el PDF en memoria como mecanismo de distribución inatacable:
 # una vez aprobado, los votantes reciben el documento y actúan como testigos públicos.
 
 @app.post("/propuestas/{propuesta_id}/ejecutar-mandato")
 def ejecutar_mandato(propuesta_id: int):
-    conn = sqlite3.connect(DB)
+    conn = sqlite3.connect(_db_path())
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
     prop = conn.execute("SELECT estado FROM propuestas WHERE id = ?", (propuesta_id,)).fetchone()
@@ -160,7 +122,7 @@ def validar_identidad(data: dict):
     uid = data.get("usuario_id")
     m_blind_str = data.get("m_blind")
     
-    conn = sqlite3.connect(DB)
+    conn = sqlite3.connect(_db_path())
     try:
         if not conn.execute("SELECT 1 FROM usuarios WHERE id=?", (uid,)).fetchone():
             raise HTTPException(404, "Usuario no encontrado")
@@ -198,7 +160,7 @@ def votar_anonimo(data: dict):
     if pow(s_final, 65537, VALIDATOR_N) != m:
         raise HTTPException(400, "Firma criptográfica inválida")
     
-    conn = sqlite3.connect(DB)
+    conn = sqlite3.connect(_db_path())
     try:
         # Insertar voto ANÓNIMO (sin usuario_id)
         conn.execute("INSERT INTO votos (propuesta_id, opcion, firma_ec) VALUES (?, ?, ?)", 
@@ -209,3 +171,5 @@ def votar_anonimo(data: dict):
         raise HTTPException(409, "Error de integridad en el voto")
     finally:
         conn.close()
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
