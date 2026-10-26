@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToNumberBE } from '@noble/curves/abstract/utils';

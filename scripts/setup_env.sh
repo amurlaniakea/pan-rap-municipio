@@ -1,12 +1,14 @@
 #!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
 set -euo pipefail
-REPO="/mnt/c/Users/Sil/Documents/GitHub/amurlaniakea/pan-rap-municipio"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 echo "[SETUP] Creando venv..."
 python3 -m venv .venv
 . ./.venv/bin/activate
 echo "[SETUP] Instalando dependencias..."
-pip install --quiet -r requirements.txt || echo "(algunas dependencias pueden no instalar; se continúa)"
+pip install -r requirements.txt
 echo "[SETUP] Inicializando DB..."
 python3 -c "
 import sqlite3, pathlib
@@ -22,3 +24,5 @@ c.executescript(pathlib.Path('scripts/seed_inicial.sql').read_text())
 print('Seed poblado.')
 "
 echo "[SETUP] ÉXITO. Entorno listo. Para tests: pytest tests/"
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
