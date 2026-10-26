@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives import hashes
@@ -31,11 +33,10 @@ def test_payload_alterado_rechazado():
     compact = (r.to_bytes(32, "big") + s.to_bytes(32, "big")).hex()
     der = _compact_a_der(compact)
     
-    try:
+    import pytest
+    from cryptography.exceptions import InvalidSignature
+    with pytest.raises(InvalidSignature):
         k.public_key().verify(der, b"1:2:en_contra", ec.ECDSA(hashes.SHA256()))
-        raise AssertionError("¡ERROR de seguridad: aceptó un payload alterado!")
-    except Exception:
-        pass  # Éxito: fue rechazado
 
 def test_high_s_normalizado():
     """Verifica que la función normaliza correctamente un valor high-S sin fallar."""
@@ -53,4 +54,5 @@ def test_high_s_normalizado():
     
     # Verificamos que sea un objeto bytes y tenga una longitud mínima razonable (> 30 bytes)
     assert isinstance(der, bytes)
-    assert len(der) > 30  # Una firma DER, incluso con valores pequeños, tiene al menos ~38 bytes
+    assert len(der) > 30  # Una firma DER, incluso con valores pequeños, tiene al menos ~38 bytes# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
