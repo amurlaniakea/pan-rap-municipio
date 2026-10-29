@@ -2,12 +2,9 @@
 # Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
 """Fase 2: contrato del Emisor Blind Schnorr (03-motor-blind-schnorr.md: AC-S2, AC-S3, AC-S4).
 
-El módulo `emisor_schnorr.py` se crea en la Fase 3. Hoy cada test falla con ModuleNotFoundError y
-está marcado xfail estricto con esa causa. Cuando exista el módulo, cada test pasa a XPASS: la suite
-falla a propósito hasta que se retire la marca PENDIENTE. Si un test falla por otra causa distinta,
-es un fallo real y la suite también falla.
+Estado: implementado en `emisor_schnorr.py` (Fase 3); estos tests ya son normales.
 
-Contrato que se espera de emisor_schnorr.py (decisiones del Plan):
+Contrato de emisor_schnorr.py (decisiones del Plan):
     class EmisionOcupada(Exception)    # ya hay una sesión abierta
     class SesionInvalida(Exception)    # sesión desconocida, caducada o ya usada
     class EntradaInvalida(Exception)   # e fuera de rango o con longitud incorrecta
@@ -26,13 +23,6 @@ import pytest
 Q = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 E_VALIDO = (1).to_bytes(32, "big")
 
-PENDIENTE = pytest.mark.xfail(
-    strict=True,
-    raises=ModuleNotFoundError,
-    reason="Fase 3: emisor_schnorr.py aún no existe",
-)
-
-
 class Reloj:
     """Reloj falso para probar la caducidad sin esperar."""
 
@@ -50,7 +40,6 @@ def _emisor(reloj=None):
 
 
 # ---------------------------------------------------------------- AC-S2: una sola sesión abierta
-@PENDIENTE
 def test_s2_segunda_sesion_con_otra_abierta_se_rechaza():
     m, em = _emisor()
     em.inicio()
@@ -58,7 +47,6 @@ def test_s2_segunda_sesion_con_otra_abierta_se_rechaza():
         em.inicio()
 
 
-@PENDIENTE
 def test_s2_la_sesion_caduca_a_los_10_s():
     reloj = Reloj()
     m, em = _emisor(reloj)
@@ -70,7 +58,6 @@ def test_s2_la_sesion_caduca_a_los_10_s():
     em.inicio()  # caducada: ya se puede abrir otra
 
 
-@PENDIENTE
 def test_s2_fin_libera_el_cerrojo():
     m, em = _emisor()
     sesion, _ = em.inicio()
@@ -78,7 +65,6 @@ def test_s2_fin_libera_el_cerrojo():
     em.inicio()
 
 
-@PENDIENTE
 def test_s2_50_hilos_solo_una_sesion_abierta():
     m, em = _emisor()
     barrera = threading.Barrier(50)
@@ -101,7 +87,6 @@ def test_s2_50_hilos_solo_una_sesion_abierta():
 
 
 # ---------------------------------------------------------------- AC-S3: k efímero y único
-@PENDIENTE
 def test_s3_cada_sesion_usa_un_R_distinto():
     m, em = _emisor()
     rs = set()
@@ -112,7 +97,6 @@ def test_s3_cada_sesion_usa_un_R_distinto():
     assert len(rs) == 200
 
 
-@PENDIENTE
 def test_s3_R_e_Y_miden_33_bytes():
     m, em = _emisor()
     _, R = em.inicio()
@@ -120,7 +104,6 @@ def test_s3_R_e_Y_miden_33_bytes():
     assert len(em.Y) == 33
 
 
-@PENDIENTE
 def test_s3_una_sesion_no_se_puede_finalizar_dos_veces():
     m, em = _emisor()
     sesion, _ = em.inicio()
@@ -129,7 +112,6 @@ def test_s3_una_sesion_no_se_puede_finalizar_dos_veces():
         em.fin(sesion, E_VALIDO)
 
 
-@PENDIENTE
 def test_s3_una_sesion_caducada_no_se_puede_finalizar():
     reloj = Reloj()
     m, em = _emisor(reloj)
@@ -151,7 +133,6 @@ E_INVALIDOS = [
 ]
 
 
-@PENDIENTE
 @pytest.mark.parametrize("e", E_INVALIDOS)
 def test_s4_entrada_invalida_cancela_la_sesion(e):
     m, em = _emisor()
@@ -163,17 +144,25 @@ def test_s4_entrada_invalida_cancela_la_sesion(e):
     em.inicio()  # y el cerrojo quedó libre
 
 
-@PENDIENTE
 def test_s4_sesion_desconocida():
     m, em = _emisor()
     with pytest.raises(m.SesionInvalida):
         em.fin("no-existe", E_VALIDO)
 
 
-@PENDIENTE
 def test_s4_fin_devuelve_s_de_32_bytes():
     m, em = _emisor()
     sesion, _ = em.inicio()
     s = em.fin(sesion, E_VALIDO)
     assert isinstance(s, bytes)
     assert len(s) == 32
+
+
+@pytest.mark.parametrize("sesion", [None, b"abc", "ñandú", 12345, ""])
+def test_s4_sesion_con_tipo_o_formato_raro_es_invalida(sesion):
+    m, em = _emisor()
+    em.inicio()
+    with pytest.raises(m.SesionInvalida):
+        em.fin(sesion, E_VALIDO)
+    with pytest.raises(m.EmisionOcupada):  # un id raro no destruye la sesión legítima
+        em.inicio()
