@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>PAN-RAP Municipio</title>
+  <title>PAN-RAP Municipio — Fase 5 (Blind Schnorr)</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 2rem; }
     .btn { padding: 0.5rem 1rem; margin: 0.5rem; cursor: pointer; background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 0.5rem; }
@@ -11,96 +11,19 @@
   </style>
 </head>
 <body>
-  <h1>🏛️ PAN-RAP Municipio: Propuesta #2</h1>
-  <div id="status">⏳ Conectando con el validador...</div>
-  <button class="btn" onclick="votar(this, 'a_favor')">👍 A Favor</button>
-  <button class="btn" onclick="votar(this, 'en_contra')">👎 En Contra</button>
-  <button class="btn" onclick="votar(this, 'abstencion')">⚪ Abstención</button>
+  <h1>🏛️ PAN-RAP Municipio: Propuesta #2 (Fase 5 — Blind Schnorr)</h1>
+  <div id="status">⏳ Cargando cliente Schnorr...</div>
+  <button class="btn" onclick="window.flujoVoto('a_favor', 'http://localhost:8000/convocatorias/test/emision/inicio', 'http://localhost:8000/convocatorias/test/emision/fin', 'http://localhost:8000/convocatorias/test/votos').then(r => { document.getElementById('status').innerText = '✅ ' + r.mensaje; document.querySelectorAll('.btn').forEach(b => b.disabled = true); }).catch(e => { document.getElementById('status').innerText = '❌ ' + e.message; });">👍 A Favor</button>
+  <button class="btn" onclick="window.flujoVoto('en_contra', 'http://localhost:8000/convocatorias/test/emision/inicio', 'http://localhost:8000/convocatorias/test/emision/fin', 'http://localhost:8000/convocatorias/test/votos').then(r => { document.getElementById('status').innerText = '✅ ' + r.mensaje; document.querySelectorAll('.btn').forEach(b => b.disabled = true); }).catch(e => { document.getElementById('status').innerText = '❌ ' + e.message; });">👎 En Contra</button>
+  <button class="btn" onclick="window.flujoVoto('abstencion', 'http://localhost:8000/convocatorias/test/emision/inicio', 'http://localhost:8000/convocatorias/test/emision/fin', 'http://localhost:8000/convocatorias/test/votos').then(r => { document.getElementById('status').innerText = '✅ ' + r.mensaje; document.querySelectorAll('.btn').forEach(b => b.disabled = true); }).catch(e => { document.getElementById('status').innerText = '❌ ' + e.message; });">⚪ Abstención</button>
 
-  <script>
-    let VALIDATOR_N = 0n;
-    const VALIDATOR_E = 65537n;
-
-    function modPow(base, exp, mod) {
-        let res = 1n; base = base % mod;
-        while (exp > 0n) {
-            if (exp % 2n === 1n) res = (res * base) % mod;
-            base = (base * base) % mod;
-            exp /= 2n;
-        }
-        return res;
-    }
-
-    function modInverse(a, m) {
-        let m0 = m, y = 0n, x = 1n;
-        if (m === 1n) return 0n;
-        while (a > 1n) {
-            let q = a / m, t = m; m = a % m; a = t;
-            t = y; y = x - q * y; x = t;
-        }
-        return x < 0n ? x + m0 : x;
-    }
-
-    fetch('http://localhost:8000/validador/public-key')
-      .then(r => r.json())
-      .then(data => {
-          VALIDATOR_N = BigInt(data.n);
-          document.getElementById('status').innerText = '✅ Claves cargadas. Listo para votar anónimamente.';
-          document.getElementById('status').style.background = '#065f46';
-      })
-      .catch(() => {
-          document.getElementById('status').innerText = '❌ Error: ¿Está el backend corriendo en puerto 8000?';
-          document.getElementById('status').style.background = '#991b1b';
-      });
-
-    async function votar(btn, opcion) {
-        if (btn.disabled) return;
-        const originalText = btn.innerText;
-        btn.disabled = true;
-        btn.innerText = '🔒 Cegando y firmando...';
-        
-        try {
-            const msgBytes = new TextEncoder().encode(`2:${opcion}`);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBytes);
-            const m = BigInt('0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join(''));
-            
-            const rBytes = new Uint8Array(256);
-            crypto.getRandomValues(rBytes);
-            let r = BigInt('0x' + Array.from(rBytes).map(b => b.toString(16).padStart(2, '0')).join(''));
-            r = r % VALIDATOR_N;
-
-            const m_blind = (m * modPow(r, VALIDATOR_E, VALIDATOR_N)) % VALIDATOR_N;
-
-            const respId = await fetch('http://localhost:8000/validar-identidad', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ usuario_id: 1, m_blind: m_blind.toString() })
-            });
-            const dataId = await respId.json();
-            if (!respId.ok) throw new Error(dataId.detail || 'Error en validación');
-
-            const s_blind = BigInt(dataId.s_blind);
-            const s_final = (s_blind * modInverse(r, VALIDATOR_N)) % VALIDATOR_N;
-
-            const respVote = await fetch('http://localhost:8000/votar', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ propuesta_id: 2, opcion: opcion, s_final: s_final.toString() })
-            });
-            const dataVote = await respVote.json();
-
-            if (respVote.ok) {
-                document.getElementById('status').innerText = '✅ ' + dataVote.mensaje;
-                document.querySelectorAll('.btn').forEach(b => { b.disabled = true; b.innerText = 'Voto anónimo registrado 🔒'; });
-            } else {
-                throw new Error(dataVote.detail || 'Voto rechazado');
-            }
-        } catch (e) {
-            document.getElementById('status').innerText = '⚠️ ' + e.message;
-            btn.disabled = false;
-            btn.innerText = originalText;
-        }
-    }
+  <script type="module">
+    import { secp256k1 } from './lib/package/secp256k1.js';
+    import { sha256 } from './lib/package/sha2.js';
+    // Exponer para uso en funciones globales (simulado)
+    window.secp256k1 = secp256k1;
+    window.sha256 = sha256;
   </script>
+  <script src="voto_schnorr.js"></script>
 </body>
 </html>

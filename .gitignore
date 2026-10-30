@@ -1,5 +1,7 @@
 # Dependencias
 node_modules/
+# Claves de referencia (nunca subir al remoto público)
+tests/clave_real_ref.hex
 # Base de datos
 *.db
 *.sqlite
@@ -24,3 +26,6 @@ __pycache__/
 .venv/
 *.pyc
 .pytest_cache/
+frontend/lib/*.tgz
+frontend/lib/package/src/
+frontend/lib/package/*.d.ts
