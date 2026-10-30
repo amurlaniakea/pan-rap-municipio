@@ -27,5 +27,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 frontend/lib/*.tgz
-frontend/lib/package/src/
 frontend/lib/package/*.d.ts
+frontend/lib/package/src/
+*.tgz
+*.d.ts

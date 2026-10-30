@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pan-rap-municipio"
+version = "0.5.0"
+description = "Prototipo municipal para gobernanza cívica y participación ciudadana con Blind Schnorr sobre secp256k1"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.12"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+]
+authors = [
+    {name = "Pedro Sordo Martínez", email = "amurlaniakea@gmail.com"},
+]
+keywords = ["pan-rap", "blind-schnorr", "secp256k1", "anonimato", "gobernanza-civica", "agpl"]
+dependencies = [
+    "coincurve>=23.0.0",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "sqlite3>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/amurlaniakea/pan-rap-municipio"
+Repository = "https://github.com/amurlaniakea/pan-rap-municipio"
+Issues = "https://github.com/amurlaniakea/pan-rap-municipio/issues"
+License = "https://www.gnu.org/licenses/agpl-3.0.txt"
+
+[tool.setuptools]
+packages = ["backend", "frontend", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
