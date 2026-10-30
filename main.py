@@ -1,175 +1,107 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
-# main.py — API FastAPI
+"""API FastAPI — Fase 5 (Blind Schnorr). Usa solo coincurve para secretos (S4)."""
+import os, sqlite3, secrets
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-import sqlite3, os
-from pathlib import Path
+
+import re
+
+def _validar_convocatoria_id(conv_id: str) -> bool:
+    if not isinstance(conv_id, str) or len(conv_id) == 0 or len(conv_id) > 64:
+        return False
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', conv_id))
+
+# Regla S4: toda aritmética con secretos pasa por coincurve (Emisor)
+from emisor_schnorr import Emisor, EmisionOcupada, SesionInvalida, EntradaInvalida
+import urna_schnorr
+
+def _get_conn():
+    conn = sqlite3.connect(DB_PATH())
+    if DB_PATH() == ":memory:" or not conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='emisiones'").fetchone():
+        with open("backend/schema.sql") as f:
+            conn.executescript(f.read())
+        conn.commit()
+    return conn
 
 app = FastAPI()
 
-def _db_path():
-    return os.getenv("PANRAP_DB", str(Path(__file__).parent / "panrap.db"))
+DB_PATH = lambda: os.getenv("PANRAP_DB", str(Path(__file__).parent / "panrap.db"))
 
-# Importaciones ECC y criptografía (verificación real + blind RSA para fase 4)
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
-from cryptography.hazmat.backends import default_backend
-from cryptography.exceptions import InvalidSignature
+# Cargar clave del emisor (prioridad: env var > archivo local > efímera)
+_d_bytes = None
+if "PANRAP_EMISOR_KEY_HEX" in os.environ:
+    _d_bytes = bytes.fromhex(os.environ["PANRAP_EMISOR_KEY_HEX"])
+elif (Path(__file__).parent / "clave_emisor.hex").exists():
+    _d_bytes = (Path(__file__).parent / "clave_emisor.hex").read_bytes().strip()
+if _d_bytes is None:
+    _d_bytes = secrets.token_bytes(32)
+if len(_d_bytes) != 32:
+    raise ValueError("Clave del emisor debe tener exactamente 32 bytes")
 
-# Claves del Validador (MVP — en producción provendría de un HSM o servicio seguro)
-VALIDATOR_PRIV = rsa.generate_private_key(
-    public_exponent=65537, key_size=2048, backend=default_backend()
-)
-VALIDATOR_PUB = VALIDATOR_PRIV.public_key()
-VALIDATOR_N = VALIDATOR_PUB.public_numbers().n
-# Importaciones para PDF (reporte visualmente verificado)
-# ecdsa para verificación de formato compact
+emisor = Emisor(_d_bytes)
 
-
-
-# Verificación real de firma ECC (secp256k1) - implementación seria, no placeholder
-# El payload firmado es: f"{usuario_id}:{propuesta_id}:{opcion}" en bytes UTF-8
-# La clave pública se recupera de la base de datos para cada usuario verificado.
-
-def verificar_firma_ecc(public_key_hex: str, payload_str: str, firma_hex: str) -> bool:
-    raise NotImplementedError("no verifica; ver C6")
-
-# El endpoint genera el PDF en memoria como mecanismo de distribución inatacable:
-# una vez aprobado, los votantes reciben el documento y actúan como testigos públicos.
-
-@app.post("/propuestas/{propuesta_id}/ejecutar-mandato")
-def ejecutar_mandato(propuesta_id: int):
-    conn = sqlite3.connect(_db_path())
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    prop = conn.execute("SELECT estado FROM propuestas WHERE id = ?", (propuesta_id,)).fetchone()
-    if not prop:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Propuesta no encontrada")
-    if prop[0] != "aprobada":
-        conn.close()
-        raise HTTPException(status_code=400, detail="Mandato solo ejecutable para propuestas aprobadas (actual: {})".format(prop[0]))
-    # Generación de PDF en memoria (Mandato Cívico)
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer)
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(100, 780, f"MANDATO CIVICO PAN-RAP #{propuesta_id}")
-    c.setFont("Helvetica", 12)
-    c.drawString(100, 740, "Estado: APROBADO")
-    c.drawString(100, 720, "Sello de Transparencia: Verificado por la comunidad")
-    c.drawString(100, 700, "Distribucion: Email a todos los votantes (resistencia inatacable)")
-    c.save()
-    buffer.seek(0)
-    # Obtener votantes para notificar (mecanismo de distribución inatacable)
-    votantes = conn.execute("SELECT usuario_id FROM votos WHERE propuesta_id = ?", (propuesta_id,)).fetchall()
-    emails = []
-    for (uid,) in votantes:
-        row = conn.execute("SELECT email FROM usuarios WHERE id = ?", (uid,)).fetchone()
-        if row:
-            emails.append(row[0])
-    # TODO: Implementar cola de tareas (Celery/RQ) y envío real vía SMTP seguro
-    # Por ahora: simulación de envío masivo con evidencia en memoria
-    pdf_bytes = buffer.read()
-    import hashlib
-    pdf_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-    # Integridad: registrar emisión del mandato en tabla separada; propuestas no se altera
-    conn.execute("INSERT OR IGNORE INTO mandatos (propuesta_id, pdf_sha256) VALUES (?, ?)", (propuesta_id, pdf_sha256))
+@app.post("/convocatorias/{conv_id}/emision/inicio")
+async def inicio(conv_id: str):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(status_code=400, detail="convocatoria_id inválido")
+    # S1: cerrojo — rechazar si hay una sesión pendiente global
+    try:
+        sid, R = emisor.inicio()
+    except EmisionOcupada:
+        raise HTTPException(status_code=503, detail="Servicio ocupado; reintente en 10s", headers={"Retry-After": "10"})
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO emisiones (convocatoria_id, persona_ref, estado, intentos) VALUES (?, ?, ?, ?)",
+        (conv_id, "test_ref", "pendiente", 1),  # TODO (Fase 3): Reemplazar con persona_ref real (§6 01-spec-v0.md)
+    )
     conn.commit()
     conn.close()
-    return JSONResponse(status_code=202, content={
-        "mensaje": "Mandato generado y notificado a votantes",
-        "votantes_notificados": len(emails),
-        "pdf_sha256": pdf_sha256,
-        # email_destinatarios: eliminado por privacidad; los votantes reciben notificación individual
-        "pdf_size_bytes": len(pdf_bytes),
-        "modo": "simulacion",
-        "nota": "PDF generado en memoria; distribución inatacable: los votantes reciben notificación. Este es un modo de simulación: SMTP y cola no implementados aún (ver TODO)."
-    })
+    return {"sid": sid, "R": R.hex()}
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "capacity_profile": "26k"}
-
-def _compact_a_der(hexfirma: str) -> bytes:
-    """Firma compacta r||s (64 bytes) -> DER. Exige low-S (canónica)."""
-    b = bytes.fromhex(hexfirma)
-    if len(b) != 64:
-        raise ValueError("firma compacta: se exigen 64 bytes")
-    r = int.from_bytes(b[:32], "big")
-    s = int.from_bytes(b[32:], "big")
-    n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
-    if not (0 < r < n and 0 < s < n):
-        raise ValueError("r o s fuera de rango")
-    # Normalizar a low-S (estándar BIP-62 / RFC 6979)
-    if s > n // 2:
-        s = n - s
-    def _enc(v):
-        raw = v.to_bytes(max(1, (v.bit_length() + 7) // 8), "big")
-        if raw[0] & 0x80:
-            raw = b"\x00" + raw
-        return b"\x02" + bytes([len(raw)]) + raw
-    seq = _enc(r) + _enc(s)
-    return b"\x30" + bytes([len(seq)]) + seq
-
-
-@app.get("/validador/public-key")
-def get_validator_key():
-    return {"n": str(VALIDATOR_N), "e": "65537"}
-
-@app.post("/validar-identidad")
-def validar_identidad(data: dict):
-    uid = data.get("usuario_id")
-    m_blind_str = data.get("m_blind")
-    
-    conn = sqlite3.connect(_db_path())
+@app.post("/convocatorias/{conv_id}/emision/fin")
+async def fin(conv_id: str, payload: dict):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(status_code=400, detail="convocatoria_id inválido")
+    session_id = payload.get("sesion")
+    e = bytes.fromhex(payload.get("e", "")) if isinstance(payload.get("e"), str) else payload.get("e")
     try:
-        if not conn.execute("SELECT 1 FROM usuarios WHERE id=?", (uid,)).fetchone():
-            raise HTTPException(404, "Usuario no encontrado")
-        if conn.execute("SELECT 1 FROM solicitudes_firma WHERE usuario_id=?", (uid,)).fetchone():
-            raise HTTPException(409, "Ya solicitó una firma para esta sesión")
-        
-        conn.execute("INSERT INTO solicitudes_firma (usuario_id) VALUES (?)", (uid,))
+        s = emisor.fin(str(session_id), bytes(e) if isinstance(e, bytes) else bytes.fromhex(str(e)) if isinstance(e, str) else b"")
+    except (SesionInvalida, EntradaInvalida) as exc:
+        raise HTTPException(status_code=400 if isinstance(exc, EntradaInvalida) else 403, detail=str(exc))
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE emisiones SET estado = ? WHERE convocatoria_id = ? AND estado = ?",
+        ("completada", conv_id, "pendiente"),
+    )
+    conn.commit()
+    conn.close()
+    return {"s": s.hex()}
+
+@app.post("/convocatorias/{conv_id}/votos")
+async def votar(conv_id: str, payload: dict):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(status_code=400, detail="convocatoria_id inválido")
+    opcion = payload.get("opcion")
+    r_hex = payload.get("r_prima")
+    s_hex = payload.get("s_prima")
+    if not opcion or not r_hex or not s_hex:
+        raise HTTPException(status_code=400, detail="Faltan campos obligatorios")
+    r_prima = bytes.fromhex(r_hex)
+    s_prima = bytes.fromhex(s_hex)
+    # Verificación pública con coincurve (S4 no aplica a datos públicos, pero se usa coincurve)
+    if not urna_schnorr.verificar(emisor.Y, conv_id, opcion, r_prima, s_prima):
+        raise HTTPException(status_code=400, detail="Verificación fallida")
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO votos (convocatoria_id, r_prima, s_prima, opcion) VALUES (?, ?, ?, ?)",
+            (conv_id, r_prima, s_prima, opcion),
+        )
         conn.commit()
-        
-        m_blind = int(m_blind_str)
-        d = VALIDATOR_PRIV.private_numbers().d
-        s_blind = pow(m_blind, d, VALIDATOR_N)
-        return {"s_blind": str(s_blind)}
-    finally:
-        conn.close()
-
-@app.post("/votar", status_code=201)
-def votar_anonimo(data: dict):
-    pid = data.get("propuesta_id")
-    opcion = data.get("opcion")
-    s_final_str = data.get("s_final")
-    
-    if opcion not in ("a_favor", "en_contra", "abstencion"):
-        raise HTTPException(422, "opcion no valida")
-    
-    # Verificación criptográfica de la firma ciega descegada
-    m_payload = f"{pid}:{opcion}".encode('utf-8')
-    m = int.from_bytes(hashes.Hash(hashes.SHA256(), backend=default_backend()).finalize(m_payload), 'big')
-    
-    try:
-        s_final = int(s_final_str)
-    except (ValueError, TypeError):
-        raise HTTPException(400, "s_final debe ser un número válido")
-    
-    if pow(s_final, 65537, VALIDATOR_N) != m:
-        raise HTTPException(400, "Firma criptográfica inválida")
-    
-    conn = sqlite3.connect(_db_path())
-    try:
-        # Insertar voto ANÓNIMO (sin usuario_id)
-        conn.execute("INSERT INTO votos (propuesta_id, opcion, firma_ec) VALUES (?, ?, ?)", 
-                     (pid, opcion, s_final_str))
-        conn.commit()
-        return {"mensaje": "Voto anónimo registrado y verificado criptográficamente"}
     except sqlite3.IntegrityError:
-        raise HTTPException(409, "Error de integridad en el voto")
-    finally:
         conn.close()
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
+        raise HTTPException(status_code=409, detail="Token gastado")
+    conn.close()
+    return {"id": r_hex}

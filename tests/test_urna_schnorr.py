@@ -3,9 +3,7 @@
 """Fase 2 (T-2): contrato de la Urna y de la verificación Blind Schnorr (03-motor-blind-schnorr.md:
 AC-S1, AC-S5, AC-S9).
 
-Los módulos `urna_schnorr.py` y `emisor_schnorr.py` se crean en la Fase 3/4. Hoy cada test falla con
-ModuleNotFoundError y está marcado xfail estricto con esa causa; al existir los módulos pasan a XPASS
-y la suite falla a propósito hasta retirar la marca PENDIENTE.
+Estado: implementado en `urna_schnorr.py` (Fase 4) y `emisor_schnorr.py` (Fase 3); estos tests ya son normales.
 
 Contrato esperado de urna_schnorr.py:
     mensaje(convocatoria_id: str, opcion: str) -> bytes
@@ -23,12 +21,6 @@ import secrets
 
 import pytest
 from helpers_schnorr import Q, cargar_vectores, cliente_firma
-
-PENDIENTE = pytest.mark.xfail(
-    strict=True,
-    raises=ModuleNotFoundError,
-    reason="Fase 3/4: urna_schnorr.py, emisor_schnorr.py o coincurve aún no existen",
-)
 
 V = cargar_vectores()
 Y = bytes.fromhex(V["Y"])
@@ -48,7 +40,6 @@ def _urna():
 
 
 # ------------------------------------------------------------ AC-S1: verificación contra vectores
-@PENDIENTE
 def test_s1_vectores_de_noble_verifican():
     u = _urna()
     assert len(TOK) == 30
@@ -65,7 +56,6 @@ MUTACIONES = {
 }
 
 
-@PENDIENTE
 @pytest.mark.parametrize("nombre", list(MUTACIONES))
 def test_s1_una_mutacion_invalida_la_firma(nombre):
     u = _urna()
@@ -97,20 +87,17 @@ MALFORMADAS = {
 }
 
 
-@PENDIENTE
 @pytest.mark.parametrize("nombre", list(MALFORMADAS))
 def test_s1_entrada_malformada_devuelve_false_sin_lanzar(nombre):
     u = _urna()
     assert u.verificar(*MALFORMADAS[nombre]) is False
 
 
-@PENDIENTE
 def test_s1_formato_del_mensaje():
     u = _urna()
     assert u.mensaje("conv-1", "a_favor") == b"PANRAP-v1|conv-1|a_favor"
 
 
-@PENDIENTE
 @pytest.mark.parametrize("conv,op", [("a|b", "c"), ("a", "b|c"), ("", "x"), ("x", "")])
 def test_s1_mensaje_rechaza_separadores_y_vacios(conv, op):
     u = _urna()
@@ -118,7 +105,6 @@ def test_s1_mensaje_rechaza_separadores_y_vacios(conv, op):
         u.mensaje(conv, op)
 
 
-@PENDIENTE
 def test_s1_ida_y_vuelta_emisor_cliente_urna():
     import emisor_schnorr as e
     import urna_schnorr as u
@@ -134,7 +120,6 @@ def test_s1_ida_y_vuelta_emisor_cliente_urna():
 
 
 # ------------------------------------------------------------ AC-S9: la opción va dentro de la firma
-@PENDIENTE
 @pytest.mark.parametrize("op_real", OPCIONES)
 def test_s9_el_voto_solo_vale_para_la_opcion_firmada(op_real):
     u = _urna()
@@ -148,7 +133,6 @@ def test_s9_el_voto_solo_vale_para_la_opcion_firmada(op_real):
 
 
 # ------------------------------------------------------------ AC-S5: ceguera
-@PENDIENTE
 def test_s5_toda_transcripcion_es_compatible_con_todo_voto():
     """Para cada transcripción del Emisor (R, e, s) y cada voto publicado (R', s') existe un par
     (alfa, beta) con R' = R + alfa·G + beta·Y: el Emisor no puede enlazar petición y voto."""

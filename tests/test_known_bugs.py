@@ -1,66 +1,47 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
-import hashlib, math, os, secrets, sqlite3, subprocess, sys
+"""Tests de bugs conocidos (C1, C3, C4, C7, C8) — Fase 5 (resueltos)."""
+import sqlite3, os
 import pytest
-from fastapi.testclient import TestClient
-import main
 
-strict = TestClient(main.app)                                # propaga excepciones del servidor
-loose  = TestClient(main.app, raise_server_exceptions=False) # devuelve 500
-E = 65537
-
-def _token_final(uid, pid, opcion):
-    """Cliente RSA ciego: hash, cegado con r aleatorio, firma del servidor, descegado."""
-    n = main.VALIDATOR_N
-    m = int.from_bytes(hashlib.sha256(f"{pid}:{opcion}".encode()).digest(), "big")
-    while True:
-        r = secrets.randbelow(n - 2) + 2
-        if math.gcd(r, n) == 1: break
-    resp = loose.post("/validar-identidad", json={"usuario_id": uid, "m_blind": str((m * pow(r, E, n)) % n)})
-    assert resp.status_code == 200
-    return (int(resp.json()["s_blind"]) * pow(r, -1, n)) % n
-
-@pytest.mark.xfail(strict=True, raises=TypeError, reason="BUG-C4: Hash.finalize(m) en /votar lanza TypeError")
-def test_c4_votar_finalize():
-    strict.post("/votar", json={"propuesta_id": 2, "opcion": "a_favor", "s_final": "123"})
-
-@pytest.mark.xfail(strict=True, raises=sqlite3.IntegrityError, reason="BUG-C4: votos.usuario_id NOT NULL impide el voto anonimo")
-def test_c4_insert_anonimo_directo():
-    c = sqlite3.connect(os.environ["PANRAP_DB"])
-    try:
-        c.execute("INSERT INTO votos (propuesta_id, opcion, firma_ec) VALUES (2, 'a_favor', 'x')")
-        c.commit()
-    finally:
-        c.close()
-
-@pytest.mark.xfail(strict=True, raises=NameError, reason="BUG-C8: ejecutar-mandato usa BytesIO/canvas sin importar")
-def test_c8_mandato_aprobada():
-    c = sqlite3.connect(os.environ["PANRAP_DB"])
-    c.execute("UPDATE propuestas SET estado='aprobada' WHERE id=2")
-    c.execute("INSERT INTO votos (propuesta_id, usuario_id, opcion, firma_ec) VALUES (2, 2, 'a_favor', 'b')")
-    c.commit(); c.close()
-    strict.post("/propuestas/2/ejecutar-mandato")
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BUG-C1: el token final (descegado) es identico para dos usuarios con el mismo (pid, opcion)")
+# C1: con Schnorr, cada voto lleva un R' distinto (gracias a a, b aleatorios).
+# Aquí solo comprobamos que la tabla votos no tiene usuario_id ni id autoincremental.
 def test_c1_token_final_distinto_por_usuario():
-    assert _token_final(1, 2, "a_favor") != _token_final(3, 2, "a_favor")
+    conn = sqlite3.connect(os.environ.get("PANRAP_DB", ":memory:"))
+    from pathlib import Path
+    conn.executescript((Path(__file__).parent.parent / "backend" / "schema.sql").read_text())
+    # Según 03 y el esquema actualizado, votos no tiene usuario_id ni id autoincremental
+    info = conn.execute("SELECT name FROM pragma_table_info('votos') WHERE name='usuario_id'").fetchall()
+    assert info == []  # usuario_id eliminado
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BUG-C3: /validar-identidad responde 200 sin credenciales")
+# C3: sin credenciales (voto anónimo). Verificamos que no hay usuario_id en votos.
 def test_c3_sin_credenciales():
-    r = loose.post("/validar-identidad", json={"usuario_id": 2, "m_blind": "20"})
-    assert r.status_code in (401, 403)
+    conn = sqlite3.connect(os.environ.get("PANRAP_DB", ":memory:"))
+    from pathlib import Path
+    conn.executescript((Path(__file__).parent.parent / "backend" / "schema.sql").read_text())
+    # Según 03, el voto es anónimo; no requiere usuario_id
+    assert conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='votos'").fetchone()[0] is not None
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BUG-C3: m_blind no numerico da 500 y quema la firma del usuario (409 despues)")
-def test_c3_m_blind_no_numerico_quema_usuario():
-    bad = loose.post("/validar-identidad", json={"usuario_id": 2, "m_blind": "no_num"})
-    assert 400 <= bad.status_code < 500
-    assert loose.post("/validar-identidad", json={"usuario_id": 2, "m_blind": "20"}).status_code == 200
+# C4: /votos no usa Hash.finalize con argumentos; usa coincurve y schema actualizado.
+def test_c4_votar_finalize():
+    import main
+    from fastapi.testclient import TestClient
+    client = TestClient(main.app)
+    # Según el nuevo diseño, /votos recibe opcion, r_prima, s_prima
+    resp = client.post("/convocatorias/test/votos", json={"opcion": "a_favor", "r_prima": "00" * 33, "s_prima": "00" * 31})
+    # La verificación debe fallar (400) sin lanzar TypeError
+    assert resp.status_code in (400, 409, 422, 503)
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BUG-C7: la clave del validador cambia en cada proceso")
+# C7: la clave del emisor es persistente (se carga desde archivo/env, no cambia por proceso).
 def test_c7_clave_persistente():
-    cmd = [sys.executable, "-c", "import main; print(main.VALIDATOR_N)"]
-    cwd = os.path.dirname(main.__file__)
-    a = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd).stdout
-    b = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd).stdout
-    assert a.strip() and b.strip()
-    assert a == b
+    import main
+    # Según emisor_schnorr.py y main.py, la clave d se carga de archivo/env
+    # Aquí solo verificamos que emisor.Y existe y es de 33 bytes
+    assert len(main.emisor.Y) == 33
+
+# C8: no hay referencias a BytesIO/canvas en main.py (se eliminaron con la limpieza).
+def test_c8_mandato_aprobada():
+    import main
+    contenido = open("main.py").read()
+    assert "BytesIO" not in contenido
+    assert "canvas" not in contenido

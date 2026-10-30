@@ -1,43 +1,15 @@
-CREATE TABLE IF NOT EXISTS usuarios (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  codigo_postal TEXT NOT NULL,
-  email TEXT UNIQUE NOT NULL,
-  public_key TEXT,
-  fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS propuestas (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  titulo TEXT NOT NULL,
-  estado TEXT DEFAULT 'borrador',
-  fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS comentarios (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  propuesta_id INTEGER NOT NULL REFERENCES propuestas(id),
-  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
-  cuerpo TEXT NOT NULL,
-  fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+CREATE TABLE IF NOT EXISTS emisiones (
+  convocatoria_id TEXT NOT NULL,
+  persona_ref TEXT NOT NULL,
+  estado TEXT NOT NULL CHECK (estado IN ('pendiente', 'completada', 'bloqueada')) DEFAULT 'pendiente',
+  intentos INTEGER DEFAULT 0,
+  PRIMARY KEY (convocatoria_id, persona_ref)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS votos (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  propuesta_id INTEGER NOT NULL REFERENCES propuestas(id),
-  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  convocatoria_id TEXT NOT NULL,
+  r_prima BLOB NOT NULL CHECK (length(r_prima) = 33),
+  s_prima BLOB NOT NULL CHECK (length(s_prima) = 32),
   opcion VARCHAR(16) NOT NULL CHECK (opcion IN ('a_favor','en_contra','abstencion')),
-  firma_ec TEXT NOT NULL,
-  fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (propuesta_id, usuario_id)
-);
-
-CREATE TABLE IF NOT EXISTS mandatos (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  propuesta_id INTEGER UNIQUE NOT NULL REFERENCES propuestas(id),
-  pdf_sha256 TEXT NOT NULL,
-  generado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  estado TEXT DEFAULT 'emitido'
-);
-
-CREATE TABLE IF NOT EXISTS solicitudes_firma (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  usuario_id INTEGER UNIQUE NOT NULL REFERENCES usuarios(id),
-  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+  PRIMARY KEY (convocatoria_id, r_prima)
+) WITHOUT ROWID;
