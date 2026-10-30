@@ -1,3 +1,10 @@
+CREATE TABLE IF NOT EXISTS personas (
+  convocatoria_id TEXT NOT NULL,
+  persona_ref TEXT NOT NULL,
+  alta_por TEXT,
+  PRIMARY KEY (convocatoria_id, persona_ref)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS convocatorias (
   id TEXT PRIMARY KEY,
   propuesta_id INTEGER NOT NULL,

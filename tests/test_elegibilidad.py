@@ -5,7 +5,7 @@ import hmac, hashlib
 from elegibilidad import Padron
 
 def test_c1_persona_ref_distinta_por_convocatoria():
-    p = Padron(b"secreto_convocatoria")
+    p = Padron(b"secreto_convocatoria", censo={"dni_123"})
     ref1 = p.registrar("conv_1", {"identificador": "dni_123"})
     ref2 = p.registrar("conv_2", {"identificador": "dni_123"})
     assert ref1 != ref2

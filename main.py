@@ -52,7 +52,7 @@ async def crear_convocatoria(payload: dict):
     )
     conn.commit()
     conn.close()
-    return {"id": conv_id, "secreto_hmac": secreto_bytes.hex()}
+    return {"id": conv_id, "estado": "borrador"}
 
 DB_PATH = lambda: os.getenv("PANRAP_DB", str(Path(__file__).parent / "panrap.db"))
 
@@ -70,7 +70,11 @@ if len(_d_bytes) != 32:
 emisor = Emisor(_d_bytes)
 
 @app.post("/convocatorias/{conv_id}/emision/inicio")
-async def inicio(conv_id: str):
+async def inicio(conv_id: str, payload: dict = {}):
+    payload = payload or {}
+    credencial = payload.get("credencial")
+    if not credencial:
+        raise HTTPException(status_code=400, detail="Falta credencial del usuario")
     if not _validar_convocatoria_id(conv_id):
         raise HTTPException(status_code=400, detail="convocatoria_id inválido")
     conn = _get_conn()
@@ -85,14 +89,29 @@ async def inicio(conv_id: str):
     if estado not in ("emision", "votacion"):
         conn.close()
         raise HTTPException(status_code=400, detail=f"Convocatoria no abierta (estado: {estado})")
-    # S1: cerrojo — rechazar si hay una sesión pendiente global
+    # Cargar censo desde BD (o vacío si no existe)
+    censo_rows = conn.execute(
+        "SELECT persona_ref FROM personas WHERE convocatoria_id = ?", (conv_id,)
+    ).fetchall()
+    censo_set = {r[0] for r in censo_rows}
+    # Validar duplicados: misma persona_ref ya emitió
+    proveedor = Padron(secreto_bytes, censo=censo_set)
+    persona_ref = proveedor.registrar(conv_id, {"identificador": credencial})
+    if persona_ref is None:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Persona no elegible (no en censo)")
+    existe = conn.execute(
+        "SELECT 1 FROM emisiones WHERE convocatoria_id = ? AND persona_ref = ?",
+        (conv_id, persona_ref)
+    ).fetchone()
+    if existe:
+        conn.close()
+        raise HTTPException(status_code=409, detail="Ya emitió para esta convocatoria")
+    # S1: cerrojo
     try:
         sid, R = emisor.inicio()
     except EmisionOcupada:
         raise HTTPException(status_code=503, detail="Servicio ocupado; reintente en 10s", headers={"Retry-After": "10"})
-    # Secreto persistente de la convocatoria
-    proveedor = Padron(secreto_bytes)
-    persona_ref = proveedor.registrar(conv_id, {"identificador": conv_id})
     conn.execute(
         "INSERT INTO emisiones (convocatoria_id, persona_ref, estado, intentos) VALUES (?, ?, ?, ?)",
         (conv_id, persona_ref, "pendiente", 1),
@@ -119,6 +138,29 @@ async def fin(conv_id: str, payload: dict):
     conn.commit()
     conn.close()
     return {"s": s.hex()}
+
+@app.post("/convocatorias/{conv_id}/censo", status_code=201)
+async def cargar_censo(conv_id: str, payload: dict):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(status_code=400, detail="convocatoria_id inválido")
+    identificadores = payload.get("identificadores", [])
+    conn = _get_conn()
+    row = conn.execute("SELECT secreto_hmac FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+    secreto_bytes = row[0]
+    proveedor = Padron(secreto_bytes)
+    for ident in identificadores:
+        persona_ref = proveedor.registrar(conv_id, {"identificador": ident})
+        if persona_ref:
+            conn.execute(
+                "INSERT OR IGNORE INTO personas (convocatoria_id, persona_ref, alta_por) VALUES (?, ?, ?)",
+                (conv_id, persona_ref, ident)
+            )
+    conn.commit()
+    conn.close()
+    return {"convocatoria_id": conv_id, "cargados": len(identificadores)}
 
 @app.post("/convocatorias/{conv_id}/votos")
 async def votar(conv_id: str, payload: dict):
