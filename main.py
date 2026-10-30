@@ -13,6 +13,8 @@ def _validar_convocatoria_id(conv_id: str) -> bool:
         return False
     return bool(re.match(r'^[a-zA-Z0-9_-]+$', conv_id))
 
+from elegibilidad import Padron
+
 # Regla S4: toda aritmética con secretos pasa por coincurve (Emisor)
 from emisor_schnorr import Emisor, EmisionOcupada, SesionInvalida, EntradaInvalida
 import urna_schnorr
@@ -52,9 +54,13 @@ async def inicio(conv_id: str):
     except EmisionOcupada:
         raise HTTPException(status_code=503, detail="Servicio ocupado; reintente en 10s", headers={"Retry-After": "10"})
     conn = _get_conn()
+    # Fase 3: persona_ref real vía módulo de elegibilidad (§6 01-spec-v0.md)
+    proveedor = Padron(secrets.token_bytes(32))
+    datos_registro = {"identificador": conv_id}
+    persona_ref = proveedor.registrar(conv_id, datos_registro)
     conn.execute(
         "INSERT INTO emisiones (convocatoria_id, persona_ref, estado, intentos) VALUES (?, ?, ?, ?)",
-        (conv_id, "test_ref", "pendiente", 1),  # TODO (Fase 3): Reemplazar con persona_ref real (§6 01-spec-v0.md)
+        (conv_id, persona_ref, "pendiente", 1),
     )
     conn.commit()
     conn.close()

@@ -1,3 +1,20 @@
+CREATE TABLE IF NOT EXISTS convocatorias (
+  id TEXT PRIMARY KEY,
+  propuesta_id INTEGER NOT NULL,
+  titulo TEXT NOT NULL,
+  texto_sha256 TEXT NOT NULL,
+  opciones_json TEXT NOT NULL,
+  modo_elegibilidad TEXT NOT NULL CHECK (modo_elegibilidad IN ('padron','presencial','aval','eid')) DEFAULT 'padron',
+  nivel_garantia TEXT NOT NULL CHECK (nivel_garantia IN ('alta','media','baja')) DEFAULT 'media',
+  censo_declarado INTEGER,
+  emision_abre_en TEXT,
+  voto_abre_en TEXT,
+  cierra_en TEXT,
+  estado TEXT NOT NULL DEFAULT 'borrador',
+  emisor_pub_hex TEXT NOT NULL CHECK (length(emisor_pub_hex) = 66),
+  emisor_pub_sha256 TEXT NOT NULL
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS emisiones (
   convocatoria_id TEXT NOT NULL,
   persona_ref TEXT NOT NULL,
