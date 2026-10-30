@@ -30,6 +30,84 @@ def _get_conn():
 app = FastAPI()
 import hashlib, json
 
+@app.patch("/convocatorias/{conv_id}/estado")
+async def cambiar_estado(conv_id: str, payload: dict = {}):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    nuevo_estado = payload.get("estado")
+    estados_validos = ["borrador", "programada", "emision", "votacion", "cerrada", "escrutada", "archivada"]
+    if nuevo_estado not in estados_validos:
+        raise HTTPException(400, f"Estado inválido. Válidos: {estados_validos}")
+    conn = _get_conn()
+    row = conn.execute("SELECT estado FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    estado_actual = row[0]
+    transiciones_validas = {
+        "borrador": ["programada"],
+        "programada": ["emision"],
+        "emision": ["votacion", "cerrada"],
+        "votacion": ["cerrada"],
+        "cerrada": ["escrutada"],
+        "escrutada": ["archivada"],
+    }
+    if nuevo_estado not in transiciones_validas.get(estado_actual, []):
+        conn.close()
+        raise HTTPException(400, f"Transición no permitida: {estado_actual} → {nuevo_estado}")
+    if estado_actual == "borrador" and nuevo_estado == "programada":
+        check = conn.execute("SELECT titulo, texto_sha256, opciones_json, emision_abre_en, voto_abre_en FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+        if not all(check):
+            conn.close()
+            raise HTTPException(400, "Faltan campos obligatorios para programar")
+    if nuevo_estado == "archivada":
+        conn.execute("UPDATE convocatorias SET secreto_hmac = X'00' WHERE id = ?", (conv_id,))
+    conn.execute("UPDATE convocatorias SET estado = ? WHERE id = ?", (nuevo_estado, conv_id))
+    conn.commit()
+    conn.close()
+    return {"id": conv_id, "estado_anterior": estado_actual, "estado_nuevo": nuevo_estado}
+
+@app.patch("/convocatorias/{conv_id}")
+async def actualizar_convocatoria(conv_id: str, payload: dict = {}):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    conn = _get_conn()
+    row = conn.execute("SELECT estado FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    if row[0] != "borrador":
+        conn.close()
+        raise HTTPException(400, "Solo se puede editar en estado borrador")
+    updates = []
+    values = []
+    if "titulo" in payload:
+        updates.append("titulo = ?")
+        values.append(payload["titulo"])
+    if "texto" in payload:
+        updates.append("texto_sha256 = ?")
+        values.append(hashlib.sha256(payload["texto"].encode()).hexdigest())
+    if "opciones" in payload:
+        updates.append("opciones_json = ?")
+        values.append(json.dumps(payload["opciones"]))
+    if "emision_abre_en" in payload:
+        updates.append("emision_abre_en = ?")
+        values.append(payload["emision_abre_en"])
+    if "voto_abre_en" in payload:
+        updates.append("voto_abre_en = ?")
+        values.append(payload["voto_abre_en"])
+    if "cierra_en" in payload:
+        updates.append("cierra_en = ?")
+        values.append(payload["cierra_en"])
+    if not updates:
+        conn.close()
+        raise HTTPException(400, "No hay campos para actualizar")
+    values.append(conv_id)
+    conn.execute(f"UPDATE convocatorias SET {', '.join(updates)} WHERE id = ?", values)
+    conn.commit()
+    conn.close()
+    return {"id": conv_id, "actualizado": True}
+
 @app.post("/convocatorias", status_code=201)
 async def crear_convocatoria(payload: dict):
     titulo = payload.get("titulo")
@@ -161,6 +239,219 @@ async def cargar_censo(conv_id: str, payload: dict):
     conn.commit()
     conn.close()
     return {"convocatoria_id": conv_id, "cargados": len(identificadores)}
+
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+
+@app.post("/convocatorias/{conv_id}/acta")
+async def generar_acta(conv_id: str):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT estado, titulo, opciones_json, emisor_pub_hex, emisor_pub_sha256 FROM convocatorias WHERE id = ?",
+        (conv_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    estado, titulo, opciones_json, emisor_pub_hex, emisor_pub_sha256 = row
+    if estado != "escrutada":
+        conn.close()
+        raise HTTPException(400, f"Acta solo para convocatorias escrutadas (estado: {estado})")
+    opciones = json.loads(opciones_json)
+    recuento = {}
+    for opcion in opciones:
+        count = conn.execute("SELECT COUNT(*) FROM votos WHERE convocatoria_id = ? AND opcion = ?", (conv_id, opcion)).fetchone()[0]
+        recuento[opcion] = count
+    total_votos = sum(recuento.values())
+    emisiones_completadas = conn.execute("SELECT COUNT(*) FROM emisiones WHERE convocatoria_id = ? AND estado = 'completada'", (conv_id,)).fetchone()[0]
+    personas_censo = conn.execute("SELECT COUNT(*) FROM personas WHERE convocatoria_id = ?", (conv_id,)).fetchone()[0]
+    votos = conn.execute("SELECT r_prima, s_prima, opcion FROM votos WHERE convocatoria_id = ? ORDER BY r_prima", (conv_id,)).fetchall()
+    urna_data = b""
+    for r_prima, s_prima, opcion in votos:
+        urna_data += r_prima + s_prima + opcion.encode()
+    urna_sha256 = hashlib.sha256(urna_data).hexdigest()
+    conn.close()
+    # Generación del PDF con reportlab
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+        buffer = BytesIO()
+        c = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+        c.setFont("Helvetica-Bold", 18)
+        c.drawCentredString(width / 2, height - 50, "ACTA DE ESCRUTINIO")
+        c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(width / 2, height - 75, "PAN-RAP Municipio")
+        c.setFont("Helvetica-Bold", 12)
+        y_pos = height - 120
+        c.drawString(50, y_pos, f"Convocatoria: {titulo}")
+        y_pos -= 20
+        c.drawString(50, y_pos, f"ID: {conv_id}")
+        y_pos -= 20
+        c.drawString(50, y_pos, f"Estado: {estado}")
+        y_pos -= 40
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y_pos, "RESULTADO")
+        y_pos -= 30
+        c.setFont("Helvetica", 12)
+        for opcion, count in recuento.items():
+            c.drawString(70, y_pos, f"{opcion}: {count} votos")
+            y_pos -= 20
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(70, y_pos - 10, f"Total: {total_votos} votos")
+        y_pos -= 30
+        c.drawString(70, y_pos - 10, f"Participación: {(total_votos / personas_censo * 100) if personas_censo > 0 else 0:.1f}%")
+        y_pos -= 30
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y_pos, "VERIFICACIÓN")
+        y_pos -= 30
+        c.setFont("Helvetica", 10)
+        c.drawString(50, y_pos, f"Urna SHA-256: {urna_sha256}")
+        y_pos -= 15
+        c.drawString(50, y_pos, f"Emisor SHA-256: {emisor_pub_sha256}")
+        y_pos -= 30
+        c.setFont("Helvetica", 8)
+        c.drawString(50, 50, "PAN-RAP — Tecnosfera Al Servicio De La Biosfera")
+        c.drawString(50, 35, "Documento generado por sistema de votación anónima.")
+        c.save()
+        buffer.seek(0)
+    except Exception as exc:
+        conn.close()
+        raise HTTPException(500, f"Error generando PDF: {str(exc)}")
+    conn.close()
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=acta_{conv_id}.pdf"})
+
+@app.post("/convocatorias/{conv_id}/presencial/codigo", status_code=201)
+async def generar_codigo_presencial(conv_id: str, payload: dict):
+    registrador = payload.get("registrador")
+    if not registrador:
+        raise HTTPException(400, "Falta registrador")
+    conn = _get_conn()
+    row = conn.execute("SELECT secreto_hmac FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    secreto_bytes = row[0]
+    from elegibilidad import Presencial
+    proveedor = Presencial(secreto_bytes)
+    codigo = proveedor.generar_codigo(registrador)
+    conn.close()
+    if not codigo:
+        raise HTTPException(403, "Registrador no autorizado")
+    return {"codigo": codigo}
+
+@app.post("/convocatorias/{conv_id}/aval/dar", status_code=201)
+async def dar_aval(conv_id: str, payload: dict):
+    avalador_credencial = payload.get("avalador_credencial")
+    avalado_ident = payload.get("avalado_identificador")
+    if not avalador_credencial or not avalado_ident:
+        raise HTTPException(400, "Faltan campos")
+    conn = _get_conn()
+    row = conn.execute("SELECT secreto_hmac FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    secreto_bytes = row[0]
+    from elegibilidad import Aval
+    proveedor = Aval(secreto_bytes)
+    mensaje_avalador = f"{conv_id}:{avalador_credencial}".encode()
+    import hmac, hashlib
+    avalador_ref = hmac.new(secreto_bytes, mensaje_avalador, hashlib.sha256).hexdigest()
+    exito = proveedor.dar_aval(avalador_ref, avalado_ident, conv_id)
+    conn.close()
+    if not exito:
+        raise HTTPException(400, "Avalador excedió tope de avales")
+    return {"avalador": avalador_credencial, "avalado": avalado_ident, "exito": True}
+
+@app.get("/convocatorias/{conv_id}/escrutinio")
+async def escrutinio(conv_id: str):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT estado, opciones_json, titulo, emisor_pub_hex FROM convocatorias WHERE id = ?",
+        (conv_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    estado, opciones_json, titulo, emisor_pub_hex = row
+    if estado not in ("cerrada", "escrutada", "archivada"):
+        conn.close()
+        raise HTTPException(400, f"Escrutinio solo disponible para convocatorias cerradas (estado: {estado})")
+    opciones = json.loads(opciones_json)
+    recuento = {}
+    for opcion in opciones:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM votos WHERE convocatoria_id = ? AND opcion = ?",
+            (conv_id, opcion)
+        ).fetchone()[0]
+        recuento[opcion] = count
+    total_votos = sum(recuento.values())
+    emisiones_completadas = conn.execute(
+        "SELECT COUNT(*) FROM emisiones WHERE convocatoria_id = ? AND estado = 'completada'",
+        (conv_id,)
+    ).fetchone()[0]
+    personas_censo = conn.execute(
+        "SELECT COUNT(*) FROM personas WHERE convocatoria_id = ?",
+        (conv_id,)
+    ).fetchone()[0]
+    votos = conn.execute(
+        "SELECT r_prima, s_prima, opcion FROM votos WHERE convocatoria_id = ? ORDER BY r_prima",
+        (conv_id,)
+    ).fetchall()
+    urna_data = b""
+    for r_prima, s_prima, opcion in votos:
+        urna_data += r_prima + s_prima + opcion.encode()
+    urna_sha256 = hashlib.sha256(urna_data).hexdigest()
+    conn.close()
+    return {
+        "convocatoria_id": conv_id,
+        "titulo": titulo,
+        "estado": estado,
+        "emisor_pub_hex": emisor_pub_hex,
+        "opciones": opciones,
+        "recuento": recuento,
+        "total_votos": total_votos,
+        "emisiones_completadas": emisiones_completadas,
+        "personas_en_censo": personas_censo,
+        "participacion": f"{(total_votos / personas_censo * 100):.1f}%" if personas_censo > 0 else "N/A",
+        "urna_sha256": urna_sha256,
+        "verificacion": f"python scripts/verificador_independiente.py {conv_id}"
+    }
+
+@app.get("/convocatorias/{conv_id}/urna")
+async def descargar_urna(conv_id: str):
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT estado, emisor_pub_hex FROM convocatorias WHERE id = ?",
+        (conv_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Convocatoria no encontrada")
+    estado, emisor_pub_hex = row
+    if estado not in ("cerrada", "escrutada", "archivada"):
+        conn.close()
+        raise HTTPException(400, f"Urna solo disponible para convocatorias cerradas (estado: {estado})")
+    votos = conn.execute(
+        "SELECT r_prima, s_prima, opcion FROM votos WHERE convocatoria_id = ? ORDER BY r_prima",
+        (conv_id,)
+    ).fetchall()
+    conn.close()
+    return {
+        "convocatoria_id": conv_id,
+        "emisor_pub_hex": emisor_pub_hex,
+        "total_votos": len(votos),
+        "votos": [
+            {"r_prima": r.hex(), "s_prima": s.hex(), "opcion": op}
+            for r, s, op in votos
+        ]
+    }
 
 @app.post("/convocatorias/{conv_id}/votos")
 async def votar(conv_id: str, payload: dict):
