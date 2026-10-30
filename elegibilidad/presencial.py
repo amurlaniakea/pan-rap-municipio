@@ -17,6 +17,8 @@ class Presencial(ProveedorElegibilidad):
         codigo = datos.get("codigo")
         if not codigo or codigo in self.codigos_usados:
             return None
+        # NOTA: codigos_usados es un set en memoria. Se pierde al reiniciar el servidor.
+        # Para producción, persistir en base de datos.
         mensaje = f"{convocatoria_id}:{codigo}".encode()
         persona_ref = hmac.new(self.secreto, mensaje, hashlib.sha256).hexdigest()
         self.codigos_usados.add(codigo)

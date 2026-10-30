@@ -10,6 +10,8 @@ class Aval(ProveedorElegibilidad):
         self.avales = {}
 
     def dar_aval(self, avalador_ref: str, avalado_ident: str, convocatoria_id: str) -> bool:
+        # NOTA: avales es un dict en memoria. Se pierde al reiniciar el servidor.
+        # Para producción, persistir en base de datos.
         if avalador_ref not in self.avales:
             self.avales[avalador_ref] = []
         if len(self.avales[avalador_ref]) >= self.tope_avales:
@@ -35,7 +37,8 @@ class Aval(ProveedorElegibilidad):
     def autenticar(self, convocatoria_id: str, credencial: str) -> str | None:
         mensaje = f"{convocatoria_id}:{credencial}".encode()
         persona_ref_esperada = hmac.new(self.secreto, mensaje, hashlib.sha256).hexdigest()
-        if persona_ref_esperada not in {hmac.new(self.secreto, f"{convocatoria_id}:{ident}".encode(), hashlib.sha256).hexdigest() for ident in self.avales.get(credencial, [])}:
-            # Autenticación matemática; verificación de elegibilidad es capa superior
-            pass
-        return persona_ref_esperada
+        # Verificar si está avalado: buscar la referencia del avalado en los avales registrados
+        for avalador_ref, avalados in self.avales.items():
+            if credencial in avalados:
+                return persona_ref_esperada
+        return None

@@ -14,7 +14,7 @@ pillow==13.0.0
 pycparser==3.12
 pydantic==2.14.1
 pydantic_core==2.50.1
-reportlab==5.1.0
+reportlab==4.0.8
 starlette==1.10.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0

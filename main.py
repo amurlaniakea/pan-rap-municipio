@@ -334,6 +334,11 @@ async def generar_codigo_presencial(conv_id: str, payload: dict):
         conn.close()
         raise HTTPException(404, "Convocatoria no encontrada")
     secreto_bytes = row[0]
+    # Validar que la convocatoria esté en un estado que acepte registros
+    row_estado = conn.execute("SELECT estado FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if row_estado and row_estado[0] not in ("borrador", "programada", "emision", "votacion"):
+        conn.close()
+        raise HTTPException(400, f"Convocatoria no acepta registros (estado: {row_estado[0]})")
     from elegibilidad import Presencial
     proveedor = Presencial(secreto_bytes)
     codigo = proveedor.generar_codigo(registrador)
@@ -354,6 +359,11 @@ async def dar_aval(conv_id: str, payload: dict):
         conn.close()
         raise HTTPException(404, "Convocatoria no encontrada")
     secreto_bytes = row[0]
+    # Validar estado
+    row_estado = conn.execute("SELECT estado FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+    if row_estado and row_estado[0] not in ("borrador", "programada", "emision", "votacion"):
+        conn.close()
+        raise HTTPException(400, f"Convocatoria no acepta registros (estado: {row_estado[0]})")
     from elegibilidad import Aval
     proveedor = Aval(secreto_bytes)
     mensaje_avalador = f"{conv_id}:{avalador_credencial}".encode()
