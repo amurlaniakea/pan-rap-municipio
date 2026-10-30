@@ -28,6 +28,31 @@ def _get_conn():
     return conn
 
 app = FastAPI()
+import hashlib, json
+
+@app.post("/convocatorias", status_code=201)
+async def crear_convocatoria(payload: dict):
+    titulo = payload.get("titulo")
+    texto = payload.get("texto")
+    opciones = payload.get("opciones", ["a_favor", "en_contra", "abstencion"])
+    modo = payload.get("modo_elegibilidad", "padron")
+    nivel = payload.get("nivel_garantia", "media")
+    if not titulo or not texto:
+        raise HTTPException(status_code=400, detail="Faltan campos obligatorios: titulo, texto")
+    import uuid
+    conv_id = str(uuid.uuid4())
+    texto_sha256 = hashlib.sha256(texto.encode()).hexdigest()
+    secreto_bytes = secrets.token_bytes(32)
+    emisor_pub_hex = emisor.Y.hex()
+    emisor_pub_sha256 = hashlib.sha256(emisor.Y).hexdigest()
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO convocatorias (id, propuesta_id, titulo, texto_sha256, opciones_json, modo_elegibilidad, nivel_garantia, estado, emisor_pub_hex, emisor_pub_sha256, secreto_hmac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (conv_id, 1, titulo, texto_sha256, json.dumps(opciones), modo, nivel, "borrador", emisor_pub_hex, emisor_pub_sha256, secreto_bytes)
+    )
+    conn.commit()
+    conn.close()
+    return {"id": conv_id, "secreto_hmac": secreto_bytes.hex()}
 
 DB_PATH = lambda: os.getenv("PANRAP_DB", str(Path(__file__).parent / "panrap.db"))
 
@@ -48,16 +73,26 @@ emisor = Emisor(_d_bytes)
 async def inicio(conv_id: str):
     if not _validar_convocatoria_id(conv_id):
         raise HTTPException(status_code=400, detail="convocatoria_id inválido")
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT estado, modo_elegibilidad, secreto_hmac FROM convocatorias WHERE id = ?",
+        (conv_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+    estado, modo, secreto_bytes = row
+    if estado not in ("emision", "votacion"):
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Convocatoria no abierta (estado: {estado})")
     # S1: cerrojo — rechazar si hay una sesión pendiente global
     try:
         sid, R = emisor.inicio()
     except EmisionOcupada:
         raise HTTPException(status_code=503, detail="Servicio ocupado; reintente en 10s", headers={"Retry-After": "10"})
-    conn = _get_conn()
-    # Fase 3: persona_ref real vía módulo de elegibilidad (§6 01-spec-v0.md)
-    proveedor = Padron(secrets.token_bytes(32))
-    datos_registro = {"identificador": conv_id}
-    persona_ref = proveedor.registrar(conv_id, datos_registro)
+    # Secreto persistente de la convocatoria
+    proveedor = Padron(secreto_bytes)
+    persona_ref = proveedor.registrar(conv_id, {"identificador": conv_id})
     conn.execute(
         "INSERT INTO emisiones (convocatoria_id, persona_ref, estado, intentos) VALUES (?, ?, ?, ?)",
         (conv_id, persona_ref, "pendiente", 1),

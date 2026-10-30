@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS convocatorias (
   cierra_en TEXT,
   estado TEXT NOT NULL DEFAULT 'borrador',
   emisor_pub_hex TEXT NOT NULL CHECK (length(emisor_pub_hex) = 66),
-  emisor_pub_sha256 TEXT NOT NULL
+  emisor_pub_sha256 TEXT NOT NULL,
+  secreto_hmac BLOB NOT NULL DEFAULT X'00'
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS emisiones (
