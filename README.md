@@ -14,7 +14,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-yellow?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.103+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![secp256k1](https://img.shields.io/badge/Curva-secp256k1-orange?logo=bitcoin&logoColor=white)](https://en.bitcoin.it/wiki/Secp256k1)
-[![Status: Fase 5](https://img.shields.io/badge/Estado-Fase%205%20✅-success)](#-roadmap)
+[![Status: Fase 3](https://img.shields.io/badge/Estado-Fase%203%20✅-success)](#-roadmap)
 
 </div>
 
@@ -28,7 +28,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 
 - 🔐 **Anonimato absoluto**: Ni el Emisor ni la Urna pueden vincular identidad con voto
 - 🛡️ **Integridad criptográfica**: Cada voto es verificable públicamente sin revelar el votante
-- ⚖️ **Un voto por persona**: Protocolo anti-doble-gasto con tokens ciegos únicos
+- ⚖️ **Un voto por persona elegible**: Protocolo anti-doble-gasto con tokens ciegos únicos
 - 🔍 **Transparencia total**: Urna pública y verificador independiente
 
 > **Filosofía**: La tecnología debe servir a la comunidad, no al revés. PAN-RAP es software libre diseñado para empoderar asambleas ciudadanas, no para controlarlas.
@@ -42,10 +42,11 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 | **Motor Criptográfico** | Blind Schnorr sobre secp256k1 (token de 65 bytes) |
 | **Backend** | Python 3.12+ con FastAPI y `coincurve` (libsecp256k1) |
 | **Frontend** | JavaScript con `@noble/curves` vendorizado (sin CDN) |
+| **Elegibilidad** | Modular: `padron`, `presencial`, `aval`, `eid` |
 | **Anonimato** | Sin `usuario_id`, sin timestamps, `WITHOUT ROWID` en la urna |
 | **Anti-Doble-Gasto** | `PRIMARY KEY (convocatoria_id, r_prima)` |
+| **Censo** | Validación HMAC-SHA256 con secreto por convocatoria |
 | **Verificación** | Script independiente que audita la urna completa |
-| **Cerbero de Sesión** | Una emisión a la vez con TTL de 10s (mitiga ataque ROS) |
 
 ---
 
@@ -84,6 +85,8 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
                     │   BASE DE DATOS │
                     │   (SQLite)      │
                     │                 │
+                    │ • convocatorias │
+                    │ • personas      │
                     │ • emisiones     │
                     │ • votos         │
                     │   (WITHOUT ROWID)│
@@ -96,7 +99,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 
 ### Requisitos Previos
 
-- Python 3.12 o 3.13 (`coincurve` aún no soporta 3.14)
+- Python 3.12 o 3.13 (coincurve aún no soporta 3.14)
 - Git
 - OpenSSL (para generar claves)
 
@@ -125,8 +128,6 @@ echo "$(openssl rand -hex 32)" > clave_emisor.hex
 chmod 600 clave_emisor.hex
 ```
 
-> ⚠️ **Nota**: Si no se proporciona clave (`PANRAP_EMISOR_KEY_HEX` ni `clave_emisor.hex`), el emisor generará una clave efímera al iniciar. **Esto solo es aceptable para desarrollo y tests**.
-
 ### Verificar Instalación
 
 ```bash
@@ -153,14 +154,75 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 
 > ⚠️ **Importante**: Usar `--workers 1` en producción. El cerrojo de sesión (S1) requiere un único proceso.
 
-### Flujo de Votación
+### Flujo de Votación Completo
 
-1. **Votante abre** `frontend/index.html` en su navegador
-2. **Selecciona opción** (`a_favor`, `en_contra`, `abstencion`)
-3. **Cliente genera** factores de cegado `a`, `b` localmente (`crypto.getRandomValues()`)
-4. **Emisor firma** el desafío cegado sin ver el mensaje
-5. **Cliente descifra** la firma y obtiene el token `(R', s')`
-6. **Urna verifica** la firma e inserta el voto anónimo
+#### 1. Crear Convocatoria
+
+```bash
+curl -X POST http://localhost:8000/convocatorias \
+  -H "Content-Type: application/json" \
+  -d '{
+    "titulo": "Presupuesto Participativo 2027",
+    "texto": "Aprobar el plan de obras públicas",
+    "modo_elegibilidad": "padron",
+    "nivel_garantia": "alta"
+  }'
+
+# Respuesta: {"id": "uuid-convocatoria", "estado": "borrador"}
+```
+
+#### 2. Cargar Censo
+
+```bash
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/censo \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identificadores": ["dni_123", "dni_456", "dni_789"]
+  }'
+
+# Respuesta: {"convocatoria_id": "uuid", "cargados": 3}
+```
+
+#### 3. Cambiar Estado a Emisión
+
+```sql
+-- En SQLite
+UPDATE convocatorias SET estado = 'emision' WHERE id = 'uuid-convocatoria';
+```
+
+#### 4. Votante Solicita Token
+
+```bash
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/emision/inicio \
+  -H "Content-Type: application/json" \
+  -d '{"credencial": "dni_123"}'
+
+# Respuesta: {"sid": "sesion_id", "R": "02...33"}
+```
+
+#### 5. Votante Envía Desafío Cegado
+
+```bash
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/emision/fin \
+  -H "Content-Type: application/json" \
+  -d '{"sesion": "sesion_id", "e": "03...32"}'
+
+# Respuesta: {"s": "04...32"}
+```
+
+#### 6. Votante Envía Voto Anónimo
+
+```bash
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/votos \
+  -H "Content-Type: application/json" \
+  -d '{
+    "opcion": "a_favor",
+    "r_prima": "02...33",
+    "s_prima": "04...32"
+  }'
+
+# Respuesta: {"id": "02...33"}
+```
 
 ### Verificar la Urna
 
@@ -187,7 +249,7 @@ python scripts/verificador_independiente.py
 | **S7** | Clave fuera de git | `.gitignore` cubre `clave_emisor.hex` |
 | **S8** | Cliente vendorizado | `frontend/lib/` con `@noble/curves` (sin CDN) |
 
-### Manejo de la Clave del Emisor
+### Manejo de Claves
 
 **⚠️ NUNCA commitear claves reales**
 
@@ -197,31 +259,37 @@ python scripts/verificador_independiente.py
 | `clave_emisor.hex` | Desarrollo | ⚠️ Solo local, `chmod 600` |
 | Clave efímera | Tests | ❌ No usar en producción |
 
+### Elegibilidad y Privacidad
+
+- **`persona_ref`**: HMAC-SHA256(secreto_convocatoria, convocatoria:identificador)
+- **Secreto por convocatoria**: Almacenado en `convocatorias.secreto_hmac`, nunca expuesto
+- **Censo**: Validación contra tabla `personas` antes de emitir
+- **Anonimato**: `persona_ref` diferente por convocatoria, no enlazable entre ellas
+
 ---
 
 ## 🗺️ Roadmap
 
 | Fase | Estado | Descripción |
 |---|---|---|
-| **Fase 1** | ✅ Completada | Investigación (`RFC 9474`, `Blind Schnorr`) |
-| **Fase 2** | ✅ Completada | Tests rojos (`AC-S1`, `AC-S2`, `AC-S4`) |
-| **Fase 3** | 🟡 En progreso | Elegibilidad modular (`persona_ref` real, §6 `01-spec-v0.md`) |
+| **Fase 1** | ✅ Completada | Investigación de primitivas (RFC 9474, Blind Schnorr) |
+| **Fase 2** | ✅ Completada | Tests rojos (AC-S1, AC-S2, AC-S4) |
+| **Fase 3** | ✅ Completada | Elegibilidad modular con censo y `persona_ref` real |
 | **Fase 4** | ✅ Completada | Urna pública y verificador independiente |
-| **Fase 5** | ✅ Completada | Migración completa a `Blind Schnorr` (`main.py`, `frontend/`, `tests/`) |
-| **Fase 6** | ⏳ Pendiente | **Auditoría criptográfica externa** (`tests/test_urna_schnorr.py`) |
-| **Fase 7** | ⏳ Pendiente | Separación física Emisor/Urna (`R-05`) |
-| **Fase 8** | ⏳ Pendiente | Normalización `NFC` del mensaje (`opcion`) |
+| **Fase 5** | ✅ Completada | Migración completa a Blind Schnorr |
+| **Fase 6** | ⏳ Pendiente | **Auditoría criptográfica externa** |
+| **Fase 7** | ⏳ Pendiente | Despliegue piloto en municipio real |
 
-> ⚠️ **Estado actual**: Prototipo funcional (`Fase 5`). **NO apto para uso vinculante** hasta completar `Fase 6` (auditoría externa) y `Fase 3` (elegibilidad modular).
+> ⚠️ **Estado actual**: Prototipo funcional. **NO apto para uso vinculante** hasta completar Fase 6.
 
 ---
 
 ## 📚 Documentación
 
-- [`docs/00-constitucion.md`](docs/00-constitucion.md) — Constitución (`K1-K10`, `P1`, metodología `Constitución → Spec → Plan → Tasks → Implement → Verify`)
-- [`docs/01-spec-v0.md`](docs/01-spec-v0.md) — Especificación (`D1-D4`, alcance, actores, glosario)
-- [`docs/02-investigacion-rfc9474.md`](docs/02-investigacion-rfc9474.md) — Investigación (`RFC 9474` `RSABSSA`, interoperabilidad con `@cloudflare/blindrsa-ts`, módulo `3072` bits)
-- [`docs/03-motor-blind-schnorr.md`](docs/03-motor-blind-schnorr.md) — Motor (`secp256k1`, `PANRAP-BSCHNORR-v1`, protocolo `S1-S8`)
+- [01-spec-v0.md](docs/01-spec-v0.md) — Especificación general
+- [02-investigacion-rfc9474.md](docs/02-investigacion-rfc9474.md) — Investigación de RSA Blind (alternativa)
+- [03-motor-blind-schnorr.md](docs/03-motor-blind-schnorr.md) — Motor actual (Blind Schnorr)
+- [RFC 9474](https://www.rfc-editor.org/rfc/rfc9474) — RSABSSA (referencia)
 
 ---
 
@@ -231,10 +299,21 @@ Este proyecto está licenciado bajo **AGPL-3.0-or-later**.
 
 ```
 PAN-RAP Municipio - Sistema de votación anónima con integridad criptográfica
-Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
-```
+Copyright (C) 2026 Pedro Sordo Martínez
 
-Ver archivo [`LICENSE`](LICENSE) para los detalles completos.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+```
 
 ---
 
@@ -242,12 +321,11 @@ Ver archivo [`LICENSE`](LICENSE) para los detalles completos.
 
 **Autor**: Pedro Sordo Martínez  
 **Email**: [amurlaniakea@gmail.com](mailto:amurlaniakea@gmail.com)  
-**Año**: 2026  
-**Identidad del Proyecto**: PAN-RAP (`Planet Assembly Network` / `Red Asamblearia Planetaria`)
+**Año**: 2026
+
+*"Tecnosfera Al Servicio De La Biosfera"*
 
 [![GitHub](https://img.shields.io/badge/GitHub-amurlaniakea-181717?logo=github&logoColor=white)](https://github.com/amurlaniakea)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-blue?logo=gnu&logoColor=white)](LICENSE)
-
-**Lema**: *Tecnósfera Al Servicio De La Biósfera*
 
 </div>
