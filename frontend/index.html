@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <title>PAN-RAP Municipio — Fase 5 (Blind Schnorr)</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "@noble/curves/secp256k1": "./lib/noble/curves/esm/secp256k1.js",
+      "@noble/hashes/sha2.js": "./lib/noble/hashes/sha2.js",
+      "@noble/hashes/utils.js": "./lib/noble/hashes/utils.js"
+    }
+  }
+  </script>
   <style>
     body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 2rem; }
     .btn { padding: 0.5rem 1rem; margin: 0.5rem; cursor: pointer; background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 0.5rem; }
@@ -17,6 +26,6 @@
   <button class="btn" onclick="window.flujoVoto('en_contra', 'http://localhost:8000/convocatorias/test/emision/inicio', 'http://localhost:8000/convocatorias/test/emision/fin', 'http://localhost:8000/convocatorias/test/votos').then(r => { document.getElementById('status').innerText = '✅ ' + r.mensaje; document.querySelectorAll('.btn').forEach(b => b.disabled = true); }).catch(e => { document.getElementById('status').innerText = '❌ ' + e.message; });">👎 En Contra</button>
   <button class="btn" onclick="window.flujoVoto('abstencion', 'http://localhost:8000/convocatorias/test/emision/inicio', 'http://localhost:8000/convocatorias/test/emision/fin', 'http://localhost:8000/convocatorias/test/votos').then(r => { document.getElementById('status').innerText = '✅ ' + r.mensaje; document.querySelectorAll('.btn').forEach(b => b.disabled = true); }).catch(e => { document.getElementById('status').innerText = '❌ ' + e.message; });">⚪ Abstención</button>
 
-  <script src="voto_schnorr.bundle.js"></script>
+  <script type="module" src="voto_schnorr.js"></script>
 </body>
 </html>
