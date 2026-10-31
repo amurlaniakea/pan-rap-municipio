@@ -185,14 +185,14 @@ async def inicio(conv_id: str, payload: dict = {}):
     persona_ref = proveedor.registrar(conv_id, {"identificador": credencial})
     if persona_ref is None:
         conn.close()
-        raise HTTPException(status_code=403, detail="Persona no elegible (no en censo)")
+        raise HTTPException(status_code=400, detail="Credencial inválida o ya utilizada")
     existe = conn.execute(
         "SELECT 1 FROM emisiones WHERE convocatoria_id = ? AND persona_ref = ?",
         (conv_id, persona_ref)
     ).fetchone()
     if existe:
         conn.close()
-        raise HTTPException(status_code=409, detail="Ya emitió para esta convocatoria")
+        raise HTTPException(status_code=400, detail="Credencial inválida o ya utilizada")
     # S1: cerrojo
     try:
         sid, R = emisor.inicio()

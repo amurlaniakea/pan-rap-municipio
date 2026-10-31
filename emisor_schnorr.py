@@ -38,6 +38,10 @@ def _mismo_id(a, b) -> bool:
         return False
 
 
+# TODO (Fase 7 - Producción): El cerrojo threading.Lock() limita a 1 worker de Uvicorn.
+# Para escalar horizontalmente, migrar el estado de sesión (sid, k, ttl) a Redis
+# con TTL nativo y bloqueos distribuidos (SETNX), permitiendo múltiples workers.
+
 class Emisor:
     def __init__(self, d: bytes, ttl: float = 10.0, reloj=time.monotonic):
         self._d = PrivateKey(d)  # ValueError si d no es un escalar válido
