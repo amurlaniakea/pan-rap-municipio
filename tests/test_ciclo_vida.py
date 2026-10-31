@@ -5,14 +5,16 @@ import sqlite3, main
 def _crear_convocatoria():
     client = TestClient(main.app)
     resp = client.post("/convocatorias", json={
-        "titulo": "Test",
-        "texto": "Texto prueba",
+        "titulo": "Test Convocatoria",
+        "texto": "Texto de prueba para auditoría",
         "opciones": ["a_favor", "en_contra", "abstencion"],
+        "modo_elegibilidad": "padron",
+        "nivel_garantia": "alta",
         "emision_abre_en": "2026-11-01T00:00:00",
         "voto_abre_en": "2026-11-02T00:00:00",
         "cierra_en": "2026-11-03T00:00:00"
     })
-    assert resp.status_code == 201
+    assert resp.status_code == 201, f"Falló creación: {resp.text}"
     return resp.json()["id"]
 
 def test_transicion_valida():

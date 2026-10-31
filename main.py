@@ -56,7 +56,10 @@ async def cambiar_estado(conv_id: str, payload: dict = {}):
         conn.close()
         raise HTTPException(400, f"Transición no permitida: {estado_actual} → {nuevo_estado}")
     if estado_actual == "borrador" and nuevo_estado == "programada":
-        check = conn.execute("SELECT titulo, texto_sha256, opciones_json, emision_abre_en, voto_abre_en FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+        check = conn.execute(
+            "SELECT titulo, texto_sha256, opciones_json, emision_abre_en, voto_abre_en, cierra_en FROM convocatorias WHERE id = ?",
+            (conv_id,)
+        ).fetchone()
         if not all(check):
             conn.close()
             raise HTTPException(400, "Faltan campos obligatorios para programar")
@@ -124,9 +127,14 @@ async def crear_convocatoria(payload: dict):
     emisor_pub_hex = emisor.Y.hex()
     emisor_pub_sha256 = hashlib.sha256(emisor.Y).hexdigest()
     conn = _get_conn()
+    # NUEVO: Extraer fechas del payload
+    emision_abre_en = payload.get("emision_abre_en")
+    voto_abre_en = payload.get("voto_abre_en")
+    cierra_en = payload.get("cierra_en")
+
     conn.execute(
-        "INSERT INTO convocatorias (id, propuesta_id, titulo, texto_sha256, opciones_json, modo_elegibilidad, nivel_garantia, estado, emisor_pub_hex, emisor_pub_sha256, secreto_hmac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (conv_id, 1, titulo, texto_sha256, json.dumps(opciones), modo, nivel, "borrador", emisor_pub_hex, emisor_pub_sha256, secreto_bytes)
+        "INSERT INTO convocatorias (id, propuesta_id, titulo, texto_sha256, opciones_json, modo_elegibilidad, nivel_garantia, emision_abre_en, voto_abre_en, cierra_en, estado, emisor_pub_hex, emisor_pub_sha256, secreto_hmac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (conv_id, 1, titulo, texto_sha256, json.dumps(opciones), modo, nivel, emision_abre_en, voto_abre_en, cierra_en, "borrador", emisor_pub_hex, emisor_pub_sha256, secreto_bytes)
     )
     conn.commit()
     conn.close()
