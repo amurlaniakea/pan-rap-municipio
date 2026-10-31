@@ -156,6 +156,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 
 > ⚠️ **Importante**: Usar `--workers 1` en producción. El cerrojo de sesión (S1) requiere un único proceso.
 
+> ⚠️ **Nota de escalabilidad**: El emisor utiliza `threading.Lock()` para garantizar la emisión secuencial. Esto limita el despliegue a un único proceso (`--workers 1`). Para escalar horizontalmente (>1000 votantes/hora), migre el estado de sesión (`sid`, `k`, `ttl`) a Redis con bloqueos distribuidos (`SETNX`) y TTL nativo, permitiendo múltiples workers de Uvicorn. Ver TODO en `emisor_schnorr.py`.
+
 ### Flujo de Votación Completo
 
 #### 1. Crear Convocatoria
@@ -345,6 +347,10 @@ python scripts/verificador_independiente.py
 - **Secreto por convocatoria**: Almacenado en `convocatorias.secreto_hmac`, nunca expuesto
 - **Censo**: Validación contra tabla `personas` antes de emitir
 - **Anonimato**: `persona_ref` diferente por convocatoria, no enlazable entre ellas
+
+### Privacidad por Defecto (Mitigación de Enumeración)
+
+Los endpoints de emisión (`/emision/inicio`) devuelven un mensaje de error genérico (`400 - Credencial inválida o ya utilizada`) tanto para credenciales inexistentes como para credenciales que ya emitieron. Esto impide a un atacante enumerar qué identidades existen en el censo o determinar quiénes ya votaron.
 
 ---
 
