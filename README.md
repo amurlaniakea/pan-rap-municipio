@@ -10,11 +10,13 @@
 
 Sistema de votación anónima con integridad criptográfica para gobernanza cívica municipal
 
+> ⚠️ **Estado real: prototipo.** La firma ciega (Blind Schnorr) está implementada y probada; el flujo servidor de extremo a extremo se está estabilizando (Fase 6a, ver [auditoría](#-estado-y-limitaciones-conocidas)). **No usar en elecciones reales.** El **cliente web de `frontend/` todavía no es compatible** con este servidor.
+
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-yellow?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.103+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![secp256k1](https://img.shields.io/badge/Curva-secp256k1-orange?logo=bitcoin&logoColor=white)](https://en.bitcoin.it/wiki/Secp256k1)
-[![Status: Fase 5.5](https://img.shields.io/badge/Estado-Fase%205.5%20✅-success)](#-roadmap)
+[![Status: Prototipo](https://img.shields.io/badge/Estado-Prototipo%20(Fase%206a)-orange)](#-roadmap)
 
 </div>
 
@@ -26,10 +28,10 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 
 **PAN-RAP Municipio** es la implementación de referencia del módulo de votación anónima, utilizando firmas ciegas Schnorr sobre la curva elíptica secp256k1 para garantizar:
 
-- 🔐 **Anonimato absoluto**: Ni el Emisor ni la Urna pueden vincular identidad con voto
+- 🔐 **Anonimato de la firma**: el emisor no ve el mensaje firmado ni el token final. Pero emisor y urna comparten proceso y operador: quien opere el servidor puede correlacionar identidad y voto por IP, tiempos o logs ([modelo de confianza](docs/04-modelo-de-confianza.md))
 - 🛡️ **Integridad criptográfica**: Cada voto es verificable públicamente sin revelar el votante
 - ⚖️ **Un voto por persona elegible**: Protocolo anti-doble-gasto con tokens ciegos únicos
-- 🔍 **Transparencia total**: Urna pública y verificador independiente
+- 🔍 **Urna pública al cierre**: cada voto se verifica con la clave pública de la convocatoria; el verificador no necesita claves privadas
 
 > **Filosofía**: La tecnología debe servir a la comunidad, no al revés. PAN-RAP es software libre diseñado para empoderar asambleas ciudadanas, no para controlarlas.
 
@@ -41,13 +43,15 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 |---|---|
 | **Motor Criptográfico** | Blind Schnorr sobre secp256k1 (token de 65 bytes) |
 | **Backend** | Python 3.12+ con FastAPI y `coincurve` (libsecp256k1) |
-| **Frontend** | JavaScript con `@noble/curves` vendorizado (sin CDN) |
+| **Frontend** | `frontend/`: cliente en JavaScript **no funcional con este backend** (pendiente de rehacer; ver limitaciones) |
 | **Ciclo de Vida** | Transiciones de estado validadas (`borrador` → `programada` → `emision` → `votacion` → `cerrada` → `escrutada` → `archivada`) |
 | **Acta PDF** | Generación automática con reportlab al finalizar el escrutinio |
-| **Modos de Elegibilidad** | Los 4 modos funcionales (`padron` con censo HMAC, `presencial` con códigos de un solo uso, `aval` con K avales, `eid` placeholder) |
-| **Anonimato** | Sin `usuario_id`, sin timestamps, `WITHOUT ROWID` en la urna |
+| **Modos de Elegibilidad** | Solo `padron` (censo HMAC). `presencial`, `aval` y `eid` **no están implementados** (los endpoints devuelven 501) |
+| **Claves** | Una clave de firma por convocatoria, derivada de la clave maestra del emisor: una firma no vale en otra convocatoria |
+| **Administración** | Endpoints de gestión protegidos con `X-Admin-Token` (`PANRAP_ADMIN_TOKEN`, ≥ 32 caracteres) |
+| **Urna** | Sin `usuario_id`, sin timestamps, `WITHOUT ROWID`; se publica ordenada por `r_prima` |
 | **Anti-Doble-Gasto** | `PRIMARY KEY (convocatoria_id, r_prima)` |
-| **Censo** | Validación HMAC-SHA256 con secreto por convocatoria |
+| **Censo** | Solo se guarda `persona_ref` = HMAC-SHA256(secreto de la convocatoria, identificador); los identificadores no se almacenan |
 | **Verificación** | Script independiente que audita la urna completa |
 
 ---
@@ -121,7 +125,9 @@ source .venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt  # Incluye reportlab para actas PDF
 pip install -r requirements-dev.txt
 
-# 4. Configurar clave del emisor (OBLIGATORIO para producción)
+# 4. Configurar clave del emisor y token de administración (el servidor NO arranca sin clave)
+export PANRAP_ADMIN_TOKEN="$(openssl rand -hex 32)"
+# Solo para pruebas locales sin clave: export PANRAP_ALLOW_EPHEMERAL_KEY=1
 # Opción A: Variable de entorno (recomendada)
 export PANRAP_EMISOR_KEY_HEX="$(openssl rand -hex 32)"
 
@@ -134,10 +140,9 @@ chmod 600 clave_emisor.hex
 
 ```bash
 # Ejecutar tests
-pytest tests/ -v
+python -m pytest -q
 
-# Resultado esperado:
-# Todos los tests pasan
+# Resultado esperado: todos pasan (los xfailed son tests heredados marcados como pendientes)
 ```
 
 ---
@@ -164,6 +169,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 
 ```bash
 curl -X POST http://localhost:8000/convocatorias \
+  -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "titulo": "Presupuesto Participativo 2027",
@@ -183,12 +189,14 @@ curl -X POST http://localhost:8000/convocatorias \
 
 ```bash
 curl -X POST http://localhost:8000/convocatorias/{conv_id}/censo \
+  -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "identificadores": ["dni_123", "dni_456", "dni_789"]
   }'
 
-# Respuesta: {"convocatoria_id": "uuid", "cargados": 3}
+# Respuesta: {"convocatoria_id": "uuid", "recibidos": 3, "cargados": 3}
+# El censo solo se puede cargar en estado borrador o programada.
 ```
 
 #### 3. Cambiar Estado a Emisión
@@ -196,10 +204,12 @@ curl -X POST http://localhost:8000/convocatorias/{conv_id}/censo \
 ```bash
 # Vía API administrativa
 curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"estado": "programada"}'
 
 curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"estado": "emision"}'
 ```
@@ -212,6 +222,8 @@ curl -X POST http://localhost:8000/convocatorias/{conv_id}/emision/inicio \
   -d '{"credencial": "dni_123"}'
 
 # Respuesta: {"sid": "sesion_id", "R": "02...33"}
+# La clave pública de la convocatoria (Y) se obtiene con GET /convocatorias/{conv_id}.
+# El cliente cega R con a y b aleatorios y calcula e (ver tests/helpers_api.py: blindar()).
 ```
 
 #### 5. Votante Envía Desafío Cegado
@@ -243,11 +255,13 @@ curl -X POST http://localhost:8000/convocatorias/{conv_id}/votos \
 ```bash
 # Borrador → Programada
 curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"estado": "programada"}'
 
 # Programada → Emisión (abre votación)
 curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"estado": "emision"}'
 ```
@@ -269,51 +283,22 @@ curl http://localhost:8000/convocatorias/{conv_id}/urna
 #### 10. Generar Acta PDF (Solo en estado escrutada)
 
 ```bash
-curl -X POST http://localhost:8000/convocatorias/{conv_id}/acta --output acta.pdf
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/acta -H "X-Admin-Token: $PANRAP_ADMIN_TOKEN" --output acta.pdf
 ```
 
 ### Modos de Elegibilidad
 
-#### Padrón (censo HMAC)
-
-```bash
-curl -X POST http://localhost:8000/convocatorias/{conv_id}/censo \
-  -H "Content-Type: application/json" \
-  -d '{"identificadores": ["dni_123", "dni_456"]}'
-```
-
-#### Presencial (códigos de un solo uso)
-
-```bash
-# Registrador genera código
-curl -X POST http://localhost:8000/convocatorias/{conv_id}/presencial/codigo \
-  -H "Content-Type: application/json" \
-  -d '{"registrador": "admin"}'
-# Respuesta: {"codigo": "token_urlsafe_16"}
-
-# Votante presenta código como credencial
-curl -X POST http://localhost:8000/convocatorias/{conv_id}/emision/inicio \
-  -H "Content-Type: application/json" \
-  -d '{"credencial": "codigo_recibido"}'
-```
-
-#### Aval (K personas ya registradas avalan)
-
-```bash
-# Dar aval
-curl -X POST http://localhost:8000/convocatorias/{conv_id}/aval/dar \
-  -H "Content-Type: application/json" \
-  -d '{"avalador_credencial": "dni_123", "avalado_identificador": "dni_999"}'
-```
+Solo está implementado el modo **`padron`** (flujo anterior). `presencial`, `aval` y `eid` **no están conectados a la emisión**: crear una convocatoria con otro modo devuelve 400 y sus endpoints devuelven 501. Los módulos de `elegibilidad/` se conservan como código de referencia.
 
 ### Verificar la Urna
 
 ```bash
-# Script independiente de auditoría
-python scripts/verificador_independiente.py
+# Script independiente (solo biblioteca estándar + la verificación Schnorr): no usa la BD ni claves privadas.
+# Lo ideal es pasar la clave pública Y obtenida por otro canal (acta, registro público) con --Y.
+python scripts/verificador_independiente.py <conv_id> --api http://localhost:8000 --Y <66 caracteres hex>
 
-# Salida esperada:
-# VERIFICACIÓN EXITOSA: X votos válidos, 0 inválidos
+# Salida correcta (código 0):  VERIFICACIÓN: N válidos, 0 inválidos, 0 duplicados
+# Código 10 si hay firmas inválidas, duplicados, recuento o hash incoherentes.
 ```
 
 ---
@@ -328,8 +313,8 @@ python scripts/verificador_independiente.py
 | **S4** | Cero aritmética int sobre secretos | Solo `coincurve` (libsecp256k1) |
 | **S5** | `k` efímero por sesión | `PrivateKey()` nuevo en cada `inicio()` |
 | **S6** | Validación fail-closed | `urna_schnorr.verificar()` captura excepciones |
-| **S7** | Clave fuera de git | `.gitignore` cubre `clave_emisor.hex` |
-| **S8** | Cliente vendorizado | `frontend/lib/` con `@noble/curves` (sin CDN) |
+| **S7** | Clave fuera de git | `.gitignore` cubre `clave_emisor.hex`; el servidor no arranca sin clave (salvo `PANRAP_ALLOW_EPHEMERAL_KEY=1`) y rechaza claves de ejemplo y ficheros con permisos abiertos |
+| **S8** | Cliente vendorizado | **No cumplido todavía**: `frontend/lib/` no existe y el cliente no es compatible con el servidor (pendiente) |
 
 ### Manejo de Claves
 
@@ -338,7 +323,7 @@ python scripts/verificador_independiente.py
 | Método | Uso | Seguridad |
 |---|---|---|
 | `PANRAP_EMISOR_KEY_HEX` | Producción | ✅ Recomendado |
-| `clave_emisor.hex` | Desarrollo | ⚠️ Solo local, `chmod 600` |
+| `clave_emisor.hex` | Desarrollo | ⚠️ Solo local, `chmod 600` (el servidor rechaza permisos más abiertos) |
 | Clave efímera | Tests | ❌ No usar en producción |
 
 ### Elegibilidad y Privacidad
@@ -363,11 +348,32 @@ Los endpoints de emisión (`/emision/inicio`) devuelven un mensaje de error gen�
 | **Fase 3** | ✅ Completada | Elegibilidad modular con censo y `persona_ref` real |
 | **Fase 4** | ✅ Completada | Urna pública y verificador independiente |
 | **Fase 5** | ✅ Completada | Migración completa a Blind Schnorr |
-| **Fase 5.5** | ✅ Completada | Mejoras de robustez: ciclo de vida, escrutinio, acta PDF, modos presencial/aval |
-| **Fase 6** | ⏳ Pendiente | **Auditoría criptográfica externa** |
+| **Fase 5.5** | ⚠️ Con defectos | Ciclo de vida, escrutinio y acta PDF; la auditoría del 2026-10-31 halló defectos de integridad en el flujo (ver abajo) |
+| **Fase 6a** | 🔧 En curso | Integridad del flujo servidor: autenticación admin, padrón, clave por convocatoria, emisión y votos robustos, verificador. Pendiente: cliente web |
+| **Fase 6b** | ⏳ Pendiente | **Auditoría criptográfica externa** |
 | **Fase 7** | ⏳ Pendiente | Despliegue piloto en municipio real |
 
-> ⚠️ **Estado actual**: Prototipo funcional. **NO apto para uso vinculante** hasta completar Fase 6.
+> ⚠️ **Estado actual**: prototipo. **NO apto para uso vinculante** hasta completar Fase 6a y Fase 6b.
+
+---
+
+## 🧭 Estado y limitaciones conocidas
+
+Una auditoría independiente (2026-10-31, ejecutando el código) encontró que el núcleo criptográfico es correcto pero el flujo que lo rodea tenía defectos. Estado:
+
+| Hallazgo | Estado |
+|---|---|
+| Carga de censo no insertaba personas; la credencial no coincidía con el censo | ✅ corregido (Fase 6a) |
+| Endpoints de administración sin autenticación | ✅ corregido |
+| `/votos` aceptaba convocatorias inexistentes o cerradas | ✅ corregido |
+| Clave global: un token de una convocatoria valía en otra | ✅ corregido (clave por convocatoria) |
+| Emisión: sesión abandonada bloqueaba al votante; `fin` marcaba a todos | ✅ corregido (reintento limitado, transacción) |
+| Verificador dependía de una clave privada | ✅ corregido |
+| DNI en claro en la tabla `personas` | ✅ corregido |
+| Cliente web (`frontend/`) incompatible con el servidor (hash del desafío, convocatoria fija, endpoint) | ❌ pendiente |
+| Modos `presencial`, `aval`, `eid` | ❌ no implementados |
+| Las fechas de la convocatoria no se aplican (el estado se cambia a mano) | ℹ️ por diseño de este prototipo |
+| Anonimato frente al operador, emisor que puede fabricar votos, urna sin compromiso verificable durante la votación | ℹ️ ver [modelo de confianza](docs/04-modelo-de-confianza.md) |
 
 ---
 
@@ -376,6 +382,7 @@ Los endpoints de emisión (`/emision/inicio`) devuelven un mensaje de error gen�
 - [01-spec-v0.md](docs/01-spec-v0.md) — Especificación general
 - [02-investigacion-rfc9474.md](docs/02-investigacion-rfc9474.md) — Investigación de RSA Blind (alternativa)
 - [03-motor-blind-schnorr.md](docs/03-motor-blind-schnorr.md) — Motor actual (Blind Schnorr)
+- [04-modelo-de-confianza.md](docs/04-modelo-de-confianza.md) — Qué garantiza y qué no garantiza el sistema
 - [RFC 9474](https://www.rfc-editor.org/rfc/rfc9474) — RSABSSA (referencia)
 
 ---
