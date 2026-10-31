@@ -2,5 +2,8 @@
   "name": "pan-rap-municipio",
   "version": "0.1.0",
   "description": "Prototipo municipal PAN-RAP - desarrollo asistido riguroso",
-  "license": "AGPL-3.0-or-later"
+  "license": "AGPL-3.0-or-later",
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
 }

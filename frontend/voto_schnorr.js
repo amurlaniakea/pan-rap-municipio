@@ -1,5 +1,5 @@
-import { secp256k1 } from '@noble/curves/secp256k1';
-import { sha256 } from '@noble/hashes/sha2.js';
+import { secp256k1 } from './lib/noble/curves/secp256k1.js';
+import { sha256 } from './lib/noble/hashes/sha2.js';
 
 const CURVE_ORDER = secp256k1.CURVE.n;
 
