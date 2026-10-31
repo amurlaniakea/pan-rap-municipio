@@ -3,6 +3,10 @@
 import sqlite3, pytest, tempfile, os
 from pathlib import Path
 
+import os as _os_env
+_os_env.environ.setdefault("PANRAP_ALLOW_EPHEMERAL_KEY", "1")
+_os_env.environ.setdefault("PANRAP_ADMIN_TOKEN", "t" * 32)
+
 @pytest.fixture(scope="session", autouse=True)
 def db_temporal():
     """Crea una BD temporal en disco compartida por todos los tests de la sesión."""
@@ -41,3 +45,15 @@ def test_client():
     import main
     from fastapi.testclient import TestClient
     return TestClient(main.app)
+
+class Api:
+    def __init__(self, client):
+        self.client = client
+        self.admin = {"X-Admin-Token": os.environ.get("PANRAP_ADMIN_TOKEN", "t" * 32)}
+
+@pytest.fixture
+def api(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANRAP_DB", str(tmp_path / "t.db"))
+    from fastapi.testclient import TestClient
+    import main
+    return Api(TestClient(main.app))

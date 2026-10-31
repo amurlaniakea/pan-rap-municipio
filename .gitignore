@@ -1,5 +1,8 @@
 # Dependencias
 node_modules/
+# Claves
+clave_emisor.hex
+PANRAP_ADMIN_TOKEN (no subir)
 # Claves de referencia (nunca subir al remoto público)
 tests/clave_real_ref.hex
 # Base de datos

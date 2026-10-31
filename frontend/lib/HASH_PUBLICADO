@@ -1,0 +1,4 @@
+# Hash de verificación del cliente vendorizado (frontend/lib)
+# Actualizar tras cada cambio en frontend/lib/
+# SHA-256 del archivo principal de la librería vendorizada
+frontend/lib/noble: sha256=PLACEHOLDER - reemplazar con hash real del archivo
