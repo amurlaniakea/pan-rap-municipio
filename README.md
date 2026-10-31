@@ -4,7 +4,7 @@
 
 ![PAN-RAP Logo](https://img.shields.io/badge/🌍-PAN--RAP%20Municipio-2ea44f?style=for-the-badge&logo=github&logoColor=white)
 
-## **Tecnosfera Al Servicio De La Biosfera**
+## **Tecnósfera Al Servicio De La Biósfera**
 
 **Planet Assembly Network** · **Red Asamblearia Planetaria**
 
@@ -14,7 +14,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-yellow?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.103+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![secp256k1](https://img.shields.io/badge/Curva-secp256k1-orange?logo=bitcoin&logoColor=white)](https://en.bitcoin.it/wiki/Secp256k1)
-[![Status: Fase 3](https://img.shields.io/badge/Estado-Fase%203%20✅-success)](#-roadmap)
+[![Status: Fase 5.5](https://img.shields.io/badge/Estado-Fase%205.5%20✅-success)](#-roadmap)
 
 </div>
 
@@ -42,7 +42,9 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 | **Motor Criptográfico** | Blind Schnorr sobre secp256k1 (token de 65 bytes) |
 | **Backend** | Python 3.12+ con FastAPI y `coincurve` (libsecp256k1) |
 | **Frontend** | JavaScript con `@noble/curves` vendorizado (sin CDN) |
-| **Elegibilidad** | Modular: `padron`, `presencial`, `aval`, `eid` |
+| **Ciclo de Vida** | Transiciones de estado validadas (`borrador` → `programada` → `emision` → `votacion` → `cerrada` → `escrutada` → `archivada`) |
+| **Acta PDF** | Generación automática con reportlab al finalizar el escrutinio |
+| **Modos de Elegibilidad** | Los 4 modos funcionales (`padron` con censo HMAC, `presencial` con códigos de un solo uso, `aval` con K avales, `eid` placeholder) |
 | **Anonimato** | Sin `usuario_id`, sin timestamps, `WITHOUT ROWID` en la urna |
 | **Anti-Doble-Gasto** | `PRIMARY KEY (convocatoria_id, r_prima)` |
 | **Censo** | Validación HMAC-SHA256 con secreto por convocatoria |
@@ -116,7 +118,7 @@ source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
 
 # 3. Instalar dependencias
-pip install -r requirements.txt
+pip install -r requirements.txt  # Incluye reportlab para actas PDF
 pip install -r requirements-dev.txt
 
 # 4. Configurar clave del emisor (OBLIGATORIO para producción)
@@ -135,7 +137,7 @@ chmod 600 clave_emisor.hex
 pytest tests/ -v
 
 # Resultado esperado:
-# 64 passed, 9 xfailed (otras fases pendientes)
+# Todos los tests pasan
 ```
 
 ---
@@ -164,8 +166,12 @@ curl -X POST http://localhost:8000/convocatorias \
   -d '{
     "titulo": "Presupuesto Participativo 2027",
     "texto": "Aprobar el plan de obras públicas",
+    "opciones": ["a_favor", "en_contra", "abstencion"],
     "modo_elegibilidad": "padron",
-    "nivel_garantia": "alta"
+    "nivel_garantia": "alta",
+    "emision_abre_en": "2026-11-01T00:00:00",
+    "voto_abre_en": "2026-11-02T00:00:00",
+    "cierra_en": "2026-11-03T00:00:00"
   }'
 
 # Respuesta: {"id": "uuid-convocatoria", "estado": "borrador"}
@@ -185,9 +191,15 @@ curl -X POST http://localhost:8000/convocatorias/{conv_id}/censo \
 
 #### 3. Cambiar Estado a Emisión
 
-```sql
--- En SQLite
-UPDATE convocatorias SET estado = 'emision' WHERE id = 'uuid-convocatoria';
+```bash
+# Vía API administrativa
+curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "Content-Type: application/json" \
+  -d '{"estado": "programada"}'
+
+curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "Content-Type: application/json" \
+  -d '{"estado": "emision"}'
 ```
 
 #### 4. Votante Solicita Token
@@ -222,6 +234,74 @@ curl -X POST http://localhost:8000/convocatorias/{conv_id}/votos \
   }'
 
 # Respuesta: {"id": "02...33"}
+```
+
+#### 7. Transicionar Estado (Administrador)
+
+```bash
+# Borrador → Programada
+curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "Content-Type: application/json" \
+  -d '{"estado": "programada"}'
+
+# Programada → Emisión (abre votación)
+curl -X PATCH http://localhost:8000/convocatorias/{conv_id}/estado \
+  -H "Content-Type: application/json" \
+  -d '{"estado": "emision"}'
+```
+
+#### 8. Consultar Escrutinio (Público)
+
+```bash
+curl http://localhost:8000/convocatorias/{conv_id}/escrutinio
+# Respuesta: recuento por opción, participación, hash de urna
+```
+
+#### 9. Descargar Urna Completa (Público)
+
+```bash
+curl http://localhost:8000/convocatorias/{conv_id}/urna
+# Respuesta: todos los votos ordenados por r_prima (no por orden de llegada)
+```
+
+#### 10. Generar Acta PDF (Solo en estado escrutada)
+
+```bash
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/acta --output acta.pdf
+```
+
+### Modos de Elegibilidad
+
+#### Padrón (censo HMAC)
+
+```bash
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/censo \
+  -H "Content-Type: application/json" \
+  -d '{"identificadores": ["dni_123", "dni_456"]}'
+```
+
+#### Presencial (códigos de un solo uso)
+
+```bash
+# Registrador genera código
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/presencial/codigo \
+  -H "Content-Type: application/json" \
+  -d '{"registrador": "admin"}'
+# Respuesta: {"codigo": "token_urlsafe_16"}
+
+# Votante presenta código como credencial
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/emision/inicio \
+  -H "Content-Type: application/json" \
+  -d '{"credencial": "codigo_recibido"}'
+```
+
+#### Aval (K personas ya registradas avalan)
+
+```bash
+# Dar aval
+curl -X POST http://localhost:8000/convocatorias/{conv_id}/aval/dar \
+  -H "Content-Type: application/json" \
+  -d '{"avalador_credencial": "dni_123", "avalado_identificador": "dni_999"}'
 ```
 
 ### Verificar la Urna
@@ -277,6 +357,7 @@ python scripts/verificador_independiente.py
 | **Fase 3** | ✅ Completada | Elegibilidad modular con censo y `persona_ref` real |
 | **Fase 4** | ✅ Completada | Urna pública y verificador independiente |
 | **Fase 5** | ✅ Completada | Migración completa a Blind Schnorr |
+| **Fase 5.5** | ✅ Completada | Mejoras de robustez: ciclo de vida, escrutinio, acta PDF, modos presencial/aval |
 | **Fase 6** | ⏳ Pendiente | **Auditoría criptográfica externa** |
 | **Fase 7** | ⏳ Pendiente | Despliegue piloto en municipio real |
 
@@ -323,7 +404,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 **Email**: [amurlaniakea@gmail.com](mailto:amurlaniakea@gmail.com)  
 **Año**: 2026
 
-*"Tecnosfera Al Servicio De La Biosfera"*
+*"Tecnósfera Al Servicio De La Biósfera"*
 
 [![GitHub](https://img.shields.io/badge/GitHub-amurlaniakea-181717?logo=github&logoColor=white)](https://github.com/amurlaniakea)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-blue?logo=gnu&logoColor=white)](LICENSE)
