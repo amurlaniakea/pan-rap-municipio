@@ -3,6 +3,10 @@
 import sqlite3, pytest, tempfile, os
 from pathlib import Path
 
+# Antes de importar main: clave efímera permitida solo en tests y token de administración conocido.
+os.environ.setdefault("PANRAP_ALLOW_EPHEMERAL_KEY", "1")
+os.environ.setdefault("PANRAP_ADMIN_TOKEN", "t" * 32)
+
 @pytest.fixture(scope="session", autouse=True)
 def db_temporal():
     """Crea una BD temporal en disco compartida por todos los tests de la sesión."""
@@ -33,7 +37,7 @@ def limpiar_datos(db_temporal):
 @pytest.fixture(autouse=True)
 def reset_emisor(monkeypatch):
     import main
-    main.emisor._sesion = None
+    main._emisores.clear()
     return
 
 @pytest.fixture
@@ -41,3 +45,17 @@ def test_client():
     import main
     from fastapi.testclient import TestClient
     return TestClient(main.app)
+
+
+class Api:
+    """Cliente de la API: .client sin credenciales y .admin con la cabecera de administración."""
+    def __init__(self, client):
+        self.client = client
+        self.admin = {"X-Admin-Token": os.environ["PANRAP_ADMIN_TOKEN"]}
+
+
+@pytest.fixture
+def api():
+    import main
+    from fastapi.testclient import TestClient
+    return Api(TestClient(main.app))

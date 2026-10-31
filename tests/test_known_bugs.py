@@ -36,8 +36,8 @@ def test_c4_votar_finalize():
 def test_c7_clave_persistente():
     import main
     # Según emisor_schnorr.py y main.py, la clave d se carga de archivo/env
-    # Aquí solo verificamos que emisor.Y existe y es de 33 bytes
-    assert len(main.emisor.Y) == 33
+    # Aquí solo verificamos que la clave derivada de la convocatoria existe y es de 33 bytes
+    assert len(main._emisor_de('conv_c7').Y) == 33
 
 # C8: no hay referencias a BytesIO/canvas en main.py (se eliminaron con la limpieza).
 def test_c8_mandato_aprobada():

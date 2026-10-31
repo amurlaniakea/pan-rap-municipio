@@ -25,3 +25,8 @@ class Padron(ProveedorElegibilidad):
         if identificador not in self.censo:
             return None
         return persona_ref_esperada
+
+    def derivar_ref(self, convocatoria_id: str, identificador: str) -> str:
+        """persona_ref = HMAC-SHA256(secreto, "conv:identificador"), sin consultar ningún censo en memoria."""
+        mensaje = f"{convocatoria_id}:{identificador}".encode()
+        return hmac.new(self.secreto, mensaje, hashlib.sha256).hexdigest()

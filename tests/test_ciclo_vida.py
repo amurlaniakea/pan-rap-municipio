@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from fastapi.testclient import TestClient
-import sqlite3, main
+import os, sqlite3, main
+
+ADMIN = {"X-Admin-Token": os.environ["PANRAP_ADMIN_TOKEN"]}
 
 def _crear_convocatoria():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     resp = client.post("/convocatorias", json={
         "titulo": "Test Convocatoria",
         "texto": "Texto de prueba para auditoría",
@@ -18,26 +20,26 @@ def _crear_convocatoria():
     return resp.json()["id"]
 
 def test_transicion_valida():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     resp = client.patch(f"/convocatorias/{conv_id}/estado", json={"estado": "programada"})
     assert resp.status_code == 200
     assert resp.json()["estado_nuevo"] == "programada"
 
 def test_transicion_invalida():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     resp = client.patch(f"/convocatorias/{conv_id}/estado", json={"estado": "emision"})
     assert resp.status_code == 400
 
 def test_actualizar_en_borrador():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     resp = client.patch(f"/convocatorias/{conv_id}", json={"titulo": "Nuevo"})
     assert resp.status_code == 200
 
 def test_no_actualizar_en_emision():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     client.patch(f"/convocatorias/{conv_id}/estado", json={"estado": "programada"})
     client.patch(f"/convocatorias/{conv_id}/estado", json={"estado": "emision"})
@@ -45,7 +47,7 @@ def test_no_actualizar_en_emision():
     assert resp.status_code == 400
 
 def test_destruccion_secreto_archivada():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     for est in ["programada", "emision", "votacion", "cerrada", "escrutada", "archivada"]:
         resp = client.patch(f"/convocatorias/{conv_id}/estado", json={"estado": est})
@@ -56,13 +58,13 @@ def test_destruccion_secreto_archivada():
     assert row[0] == b'\x00' or row[0] == b'\x00' * 32 or len(row[0]) == 0
 
 def test_escrutinio_solo_cerrada():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     resp = client.get(f"/convocatorias/{conv_id}/escrutinio")
     assert resp.status_code == 400
 
 def test_acta_solo_escrutada():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=ADMIN)
     conv_id = _crear_convocatoria()
     resp = client.post(f"/convocatorias/{conv_id}/acta")
     assert resp.status_code == 400

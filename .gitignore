@@ -1,6 +1,7 @@
 # Dependencias
 node_modules/
-# Claves de referencia (nunca subir al remoto público)
+# Clave del emisor (S7) y claves de referencia: nunca subir al remoto público
+clave_emisor.hex
 tests/clave_real_ref.hex
 # Base de datos
 *.db

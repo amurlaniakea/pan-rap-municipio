@@ -54,6 +54,12 @@ class Emisor:
     def _caducada(self, sesion) -> bool:
         return self._reloj() - sesion[2] >= self._ttl
 
+    def sid_activo(self):
+        """Id de la sesión abierta y no caducada, o None."""
+        with self._cerrojo:
+            s = self._sesion
+            return s[0] if s is not None and not self._caducada(s) else None
+
     def inicio(self):
         """Abre una sesión. Devuelve (id de sesión, R de 33 bytes)."""
         with self._cerrojo:
