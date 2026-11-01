@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from elegibilidad import Padron
 
@@ -551,3 +552,7 @@ async def votar(conv_id: str, payload: dict):
                 raise HTTPException(status_code=409, detail="Token gastado")
             raise
     return {"id": r_hex}
+
+
+# Cliente web: se sirve desde el mismo origen (/ui), así no hace falta CORS. Debe ir tras las rutas de la API.
+app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "frontend" / "ui", html=True), name="ui")

@@ -4,6 +4,10 @@
   "description": "Prototipo municipal PAN-RAP - desarrollo asistido riguroso",
   "license": "AGPL-3.0-or-later",
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "0.28.2"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "2.4.0"
   }
 }

@@ -10,7 +10,7 @@
 
 Sistema de votación anónima con integridad criptográfica para gobernanza cívica municipal
 
-> ⚠️ **Estado real: prototipo.** La firma ciega (Blind Schnorr) está implementada y probada; el flujo servidor de extremo a extremo se está estabilizando (Fase 6a, ver [auditoría](#-estado-y-limitaciones-conocidas)). **No usar en elecciones reales.** El **cliente web de `frontend/` todavía no es compatible** con este servidor.
+> ⚠️ **Estado real: prototipo.** La firma ciega (Blind Schnorr) está implementada y probada; el flujo de extremo a extremo (servidor, verificador y cliente web) quedó estabilizado en la Fase 6a; ver [estado y limitaciones](#-estado-y-limitaciones-conocidas). **No usar en elecciones reales.** El **cliente web** (`/ui`) es nuevo: está probado contra el servidor real, pero sin auditoría ni pruebas en navegadores concretos.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-yellow?logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -43,7 +43,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 |---|---|
 | **Motor Criptográfico** | Blind Schnorr sobre secp256k1 (token de 65 bytes) |
 | **Backend** | Python 3.12+ con FastAPI y `coincurve` (libsecp256k1) |
-| **Frontend** | `frontend/`: cliente en JavaScript **no funcional con este backend** (pendiente de rehacer; ver limitaciones) |
+| **Frontend** | Cliente web mínimo en `frontend/` (`@noble/curves` vendorizado y fijado, sin CDN, CSP estricta), servido en `/ui` por el propio servidor |
 | **Ciclo de Vida** | Transiciones de estado validadas (`borrador` → `programada` → `emision` → `votacion` → `cerrada` → `escrutada` → `archivada`) |
 | **Acta PDF** | Generación automática con reportlab al finalizar el escrutinio |
 | **Modos de Elegibilidad** | Solo `padron` (censo HMAC). `presencial`, `aval` y `eid` **no están implementados** (los endpoints devuelven 501) |
@@ -290,6 +290,15 @@ curl -X POST http://localhost:8000/convocatorias/{conv_id}/acta -H "X-Admin-Toke
 
 Solo está implementado el modo **`padron`** (flujo anterior). `presencial`, `aval` y `eid` **no están conectados a la emisión**: crear una convocatoria con otro modo devuelve 400 y sus endpoints devuelven 501. Los módulos de `elegibilidad/` se conservan como código de referencia.
 
+### Votar desde el navegador
+
+Con el servidor en marcha, abre `http://localhost:8000/ui/?conv=<conv_id>`: el navegador pide la clave pública de la convocatoria, calcula la firma ciega (`a` y `b` nunca salen de él) y envía el voto sin el id de sesión. Para reconstruir y verificar el bundle:
+
+```bash
+npm ci && node frontend/build.js        # regenera frontend/ui/voto.bundle.js y frontend/SHA256SUMS
+cd frontend && sha256sum -c SHA256SUMS  # comprueba el hash publicado
+```
+
 ### Verificar la Urna
 
 ```bash
@@ -314,7 +323,7 @@ python scripts/verificador_independiente.py <conv_id> --api http://localhost:800
 | **S5** | `k` efímero por sesión | `PrivateKey()` nuevo en cada `inicio()` |
 | **S6** | Validación fail-closed | `urna_schnorr.verificar()` captura excepciones |
 | **S7** | Clave fuera de git | `.gitignore` cubre `clave_emisor.hex`; el servidor no arranca sin clave (salvo `PANRAP_ALLOW_EPHEMERAL_KEY=1`) y rechaza claves de ejemplo y ficheros con permisos abiertos |
-| **S8** | Cliente vendorizado | **No cumplido todavía**: `frontend/lib/` no existe y el cliente no es compatible con el servidor (pendiente) |
+| **S8** | Cliente vendorizado | `frontend/ui/voto.bundle.js` se construye desde `frontend/src` con versiones exactas (`package-lock.json`), su SHA-256 está en `frontend/SHA256SUMS` y la CI comprueba que se reproduce |
 
 ### Manejo de Claves
 
@@ -349,11 +358,11 @@ Los endpoints de emisión (`/emision/inicio`) devuelven un mensaje de error gen�
 | **Fase 4** | ✅ Completada | Urna pública y verificador independiente |
 | **Fase 5** | ✅ Completada | Migración completa a Blind Schnorr |
 | **Fase 5.5** | ⚠️ Con defectos | Ciclo de vida, escrutinio y acta PDF; la auditoría del 2026-10-31 halló defectos de integridad en el flujo (ver abajo) |
-| **Fase 6a** | 🔧 En curso | Integridad del flujo servidor: autenticación admin, padrón, clave por convocatoria, emisión y votos robustos, verificador. Pendiente: cliente web |
+| **Fase 6a** | ✅ Completada | Integridad del flujo: autenticación admin, padrón, clave por convocatoria, emisión y votos robustos, verificador y cliente web |
 | **Fase 6b** | ⏳ Pendiente | **Auditoría criptográfica externa** |
 | **Fase 7** | ⏳ Pendiente | Despliegue piloto en municipio real |
 
-> ⚠️ **Estado actual**: prototipo. **NO apto para uso vinculante** hasta completar Fase 6a y Fase 6b.
+> ⚠️ **Estado actual**: prototipo. **NO apto para uso vinculante** hasta completar la Fase 6b (auditoría criptográfica externa).
 
 ---
 
@@ -370,7 +379,7 @@ Una auditoría independiente (2026-10-31, ejecutando el código) encontró que e
 | Emisión: sesión abandonada bloqueaba al votante; `fin` marcaba a todos | ✅ corregido (reintento limitado, transacción) |
 | Verificador dependía de una clave privada | ✅ corregido |
 | DNI en claro en la tabla `personas` | ✅ corregido |
-| Cliente web (`frontend/`) incompatible con el servidor (hash del desafío, convocatoria fija, endpoint) | ❌ pendiente |
+| Cliente web incompatible con el servidor (hash del desafío, convocatoria fija, endpoint, `sid` enviado con el voto) | ✅ reescrito, con tests de interoperabilidad JS↔Python y votación real |
 | Modos `presencial`, `aval`, `eid` | ❌ no implementados |
 | Las fechas de la convocatoria no se aplican (el estado se cambia a mano) | ℹ️ por diseño de este prototipo |
 | Anonimato frente al operador, emisor que puede fabricar votos, urna sin compromiso verificable durante la votación | ℹ️ ver [modelo de confianza](docs/04-modelo-de-confianza.md) |

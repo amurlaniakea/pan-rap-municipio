@@ -18,10 +18,12 @@ Este documento dice **qué garantiza** el prototipo y **qué no**. Sustituye cua
 4. **Resistencia a la denegación de servicio.** Solo hay una sesión de emisión abierta por convocatoria (S1: protege frente al ataque ROS/Wagner). Una persona del censo puede ocupar la sesión hasta 10 s cada vez (con intentos limitados a 3).
 5. **Un solo proceso.** El cerrojo S1 es `threading.Lock()` en memoria; ejecutar varios workers lo rompe. Usar `--workers 1`.
 6. **Autenticación del votante.** La «credencial» es el identificador que figura en el censo. Quien la conozca puede emitir su token: no hay segundo factor.
-7. **Administración.** Un único token compartido (`PANRAP_ADMIN_TOKEN`) da control total del ciclo de vida y del censo.
+7. **Resistencia a la coacción.** El votante conoce `(R', s')`, que quedan en la urna pública: puede demostrar a un tercero cómo votó (compra o coacción de votos). Las firmas ciegas no son *receipt-free*.
+8. **Administración.** Un único token compartido (`PANRAP_ADMIN_TOKEN`) da control total del ciclo de vida y del censo.
 
 ## Otros límites del prototipo
 
 - Las fechas de la convocatoria no se aplican; el administrador cambia el estado a mano.
+- El cliente web es mínimo, sin auditoría ni pruebas en navegadores concretos. Quien sirva `/ui` puede cambiar el JavaScript: la garantía real depende de que el votante use un cliente cuyo hash coincida con `frontend/SHA256SUMS`.
 - Solo está implementado el modo de elegibilidad `padron`.
 - Sin auditoría criptográfica externa (Fase 6b). La derivación de claves por convocatoria y el protocolo concreto deben ser revisados por terceros antes de cualquier uso real.

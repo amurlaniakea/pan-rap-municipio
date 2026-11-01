@@ -8,5 +8,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: npm ci
       - run: python -m pytest -q
+      - name: El bundle publicado debe ser reproducible desde el código fuente (S8)
+        run: |
+          node frontend/build.js
+          git diff --exit-code -- frontend/ui/voto.bundle.js frontend/SHA256SUMS

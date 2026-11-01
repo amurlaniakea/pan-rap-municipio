@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>PAN-RAP Municipio — Votar</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <h1>PAN-RAP Municipio</h1>
+  <p class="aviso">Prototipo. No usar en elecciones reales. La firma ciega se calcula en tu navegador; el servidor no ve tu opción en la emisión, pero quien opera el servidor puede correlacionar por IP y tiempos (ver docs/04-modelo-de-confianza.md).</p>
+  <label for="conv">Convocatoria</label>
+  <input id="conv" autocomplete="off" spellcheck="false">
+  <button id="cargar" class="btn" type="button">Cargar convocatoria</button>
+  <div id="panel" hidden>
+    <h2 id="titulo"></h2>
+    <p class="mono" id="huella"></p>
+    <p class="mono" id="clave"></p>
+    <label for="credencial">Tu credencial</label>
+    <input id="credencial" type="password" autocomplete="off">
+    <div id="opciones"></div>
+    <button id="reintentar" class="btn" type="button" hidden>Reintentar envío</button>
+  </div>
+  <div id="estado" role="status">Introduce el identificador de la convocatoria.</div>
+  <script type="module" src="voto.bundle.js"></script>
+</body>
+</html>
