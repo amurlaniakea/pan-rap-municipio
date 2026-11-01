@@ -30,7 +30,8 @@ async function cargar() {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'btn';
-    b.textContent = op;
+    b.dataset.opcion = op;
+    b.textContent = op.replaceAll('_', ' ');
     b.addEventListener('click', () => votar(op));
     caja.append(b);
   }
@@ -39,8 +40,10 @@ async function cargar() {
 }
 
 function bloquear(valor) {
-  document.querySelectorAll('.btn').forEach((b) => { b.disabled = valor; });
+  document.querySelectorAll('#opciones .btn').forEach((b) => { b.disabled = valor; });
 }
+
+const AYUDA_CREDENCIAL = ' Comprueba que la has escrito exactamente igual (mayúsculas, números y guiones) o que no la has usado ya.';
 
 async function votar(opcion) {
   const credencial = $('credencial').value.trim();
@@ -49,14 +52,14 @@ async function votar(opcion) {
   estado('Firmando y enviando el voto…');
   try {
     const r = await flujoVoto(conv.id, credencial, opcion);
-    estado(`✅ ${r.mensaje}`, 'ok');
+    estado(`✅ ${r.mensaje}. Ya puedes cerrar esta página.`, 'ok');
   } catch (e) {
     if (e.token) {
       tokenPendiente = e.token;
       $('reintentar').hidden = false;
       estado(`El token se firmó pero el envío falló: ${e.message}. Pulsa «Reintentar envío».`, 'error');
     } else {
-      estado(`❌ ${e.message}`, 'error');
+      estado(`❌ ${e.message}${/Credencial/.test(e.message) ? AYUDA_CREDENCIAL : ''}`, 'error');
       bloquear(false);
     }
   }
@@ -98,5 +101,6 @@ async function mostrarLista() {
 const params = new URLSearchParams(location.search);
 if (params.get('conv')) $('conv').value = params.get('conv');
 $('cargar').addEventListener('click', cargar);
+$('ver').addEventListener('change', () => { $('credencial').type = $('ver').checked ? 'text' : 'password'; });
 $('reintentar').addEventListener('click', reintentar);
 if ($('conv').value) cargar(); else mostrarLista();

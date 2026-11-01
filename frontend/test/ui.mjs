@@ -31,9 +31,9 @@ if (conv === '-') {
 salida.cargada = await esperar(() => !$('panel').hidden);
 salida.titulo = $('titulo').textContent;
 salida.clave = $('clave').textContent.includes('Clave pública');
-salida.opciones = botones('opciones').map((b) => b.textContent);
+salida.opciones = botones('opciones').map((b) => b.dataset.opcion);
 $('credencial').value = credencial;
-botones('opciones').find((b) => b.textContent === opcion)?.click();
+botones('opciones').find((b) => b.dataset.opcion === opcion)?.click();
 await esperar(() => /✅|❌|Introduce/.test($('estado').textContent));
 salida.estado = $('estado').textContent;
 salida.clase = $('estado').className;

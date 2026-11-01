@@ -139,6 +139,10 @@ def test_ui_se_sirve_con_csp_y_sin_cdn(api):
     assert api.client.get("/ui/voto.bundle.js").status_code == 200
     assert api.client.get("/ui/estilos.css").status_code == 200
     assert api.client.get("/ui/../build.js").status_code in (404, 400, 307)
+    assert "style=" not in html and "<script>" not in html           # compatible con la CSP estricta
+    css = api.client.get("/ui/estilos.css").text
+    assert "@import" not in css and "http" not in css                # sin recursos externos
+    assert "prefers-color-scheme: dark" in css                       # tema claro y oscuro
 
 
 def test_hash_publicado_coincide_con_el_bundle():
@@ -175,9 +179,10 @@ def test_interfaz_publicada_vota_con_dom_real(servidor):
     r = _ui_js(base, cid, "ana", "si")
     assert r["cargada"] and r["titulo"] == "Presupuesto participativo" and r["clave"] and r["csp"]
     assert r["opciones"] == ["si", "no"]
-    assert r["estado"].startswith("✅"), r
+    assert r["estado"].startswith("✅") and "cerrar esta página" in r["estado"], r
     again = _ui_js(base, cid, "ana", "no")                        # misma credencial: la UI muestra el error
     assert again["estado"].startswith("❌") and again["clase"] == "error"
+    assert "exactamente igual" in again["estado"]                   # ayuda ante credencial mal escrita
     sin_cred = _ui_js(base, cid, "", "si")
     assert "Introduce tu credencial" in sin_cred["estado"]
     s, esc = _http(base, "GET", f"/convocatorias/{cid}/escrutinio")
