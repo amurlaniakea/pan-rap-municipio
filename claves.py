@@ -58,9 +58,8 @@ def cargar_clave_maestra(env=None, base_dir: Path | None = None) -> bytes:
         "No hay clave del emisor: define PANRAP_EMISOR_KEY_HEX o crea clave_emisor.hex (chmod 600)")
 
 
-def derivar_clave_convocatoria(master: bytes, convocatoria_id: str) -> bytes:
-    """d_conv = HMAC-SHA256(master, "PANRAP-KEY-v1|conv|n"); n sube hasta que libsecp256k1 acepte el escalar."""
-    base = b"PANRAP-KEY-v1|" + convocatoria_id.encode() + b"|"
+def _derivar(master: bytes, etiqueta: bytes, convocatoria_id: str) -> bytes:
+    base = etiqueta + convocatoria_id.encode() + b"|"
     for n in range(256):
         d = hmac.new(master, base + bytes([n]), hashlib.sha256).digest()
         try:
@@ -69,3 +68,13 @@ def derivar_clave_convocatoria(master: bytes, convocatoria_id: str) -> bytes:
         except ValueError:
             continue
     raise RuntimeError("No se pudo derivar una clave válida")  # probabilidad ~2^-2048
+
+
+def derivar_clave_convocatoria(master: bytes, convocatoria_id: str) -> bytes:
+    """d_conv = HMAC-SHA256(master, "PANRAP-KEY-v1|conv|n"); n sube hasta que libsecp256k1 acepte el escalar."""
+    return _derivar(master, b"PANRAP-KEY-v1|", convocatoria_id)
+
+
+def derivar_clave_registro(master: bytes, convocatoria_id: str) -> bytes:
+    """Clave con la que se firman los checkpoints del registro de la convocatoria (distinta de la de firma ciega)."""
+    return _derivar(master, b"PANRAP-LOG-v1|", convocatoria_id)

@@ -31,7 +31,7 @@ def test_creacion_valida_y_get_publico(api):
     assert g.status_code == 200
     d = g.json()
     assert set(d) == {"id", "titulo", "texto_sha256", "opciones", "modo_elegibilidad", "estado", "emisor_pub_hex",
-                      "emisor_pub_sha256", "emision_abre_en", "voto_abre_en", "cierra_en"}
+                      "emisor_pub_sha256", "emision_abre_en", "voto_abre_en", "cierra_en", "log_pub_hex"}
     assert d["opciones"] == ["si", "no"] and len(d["emisor_pub_hex"]) == 66
     assert "secreto" not in g.text
 

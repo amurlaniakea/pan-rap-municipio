@@ -11,22 +11,24 @@ import secrets
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from coincurve import PrivateKey
 from elegibilidad import Padron
 
 # Regla S4: toda aritmética con secretos pasa por coincurve (Emisor)
 from emisor_schnorr import Emisor, EmisionOcupada, SesionInvalida, EntradaInvalida
 import urna_schnorr
 import claves
+import registro
 from urna_publica import urna_sha256
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_INTENTOS = 3
 MENSAJE_GENERICO = "Credencial inválida o ya utilizada"
 _ESTADOS_ABIERTOS = ("emision", "votacion")
@@ -74,6 +76,52 @@ def _tx(conn):
         conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+def _checkpoint_cada() -> int:
+    """Nº de votos sin sellar que dispara un checkpoint automático (menor = más integridad, más orden revelado)."""
+    try:
+        return max(1, int(os.getenv("PANRAP_CHECKPOINT_CADA", "20")))
+    except ValueError:
+        return 20
+
+
+def _checkpoints(conn, conv_id) -> list:
+    filas = conn.execute(
+        "SELECT seq, n, root, prev, creado, firma FROM checkpoints WHERE convocatoria_id = ? ORDER BY seq", (conv_id,)
+    ).fetchall()
+    return [dict(zip(("seq", "n", "root", "prev", "creado", "firma"), f)) for f in filas]
+
+
+def _votos_ordenados(conn, conv_id, solo_sellados=False):
+    """Votos en el orden del registro: (lote, r'). Los no sellados (lote NULL) van al final."""
+    extra = " AND lote IS NOT NULL" if solo_sellados else ""
+    return conn.execute(
+        "SELECT r_prima, s_prima, opcion, lote FROM votos WHERE convocatoria_id = ?" + extra +
+        " ORDER BY lote IS NULL, lote, r_prima", (conv_id,)
+    ).fetchall()
+
+
+def _sellar(conn, conv_id, forzar=False):
+    """Sella los votos sin lote en un checkpoint firmado y encadenado. El llamador abre la transacción.
+
+    forzar=True crea el primer checkpoint aunque no haya votos (cierre de una convocatoria sin votos)."""
+    pendientes = conn.execute(
+        "SELECT 1 FROM votos WHERE convocatoria_id = ? AND lote IS NULL LIMIT 1", (conv_id,)).fetchone()
+    previos = _checkpoints(conn, conv_id)
+    if not pendientes and not (forzar and not previos):
+        return None
+    seq = len(previos) + 1
+    conn.execute("UPDATE votos SET lote = ? WHERE convocatoria_id = ? AND lote IS NULL", (seq, conv_id))
+    votos = _votos_ordenados(conn, conv_id)
+    cp = {"seq": seq, "n": len(votos),
+          "root": registro.raiz(registro.hojas_de_votos([(r, s, o) for r, s, o, _ in votos])).hex(),
+          "prev": registro.GENESIS if not previos else registro.hash_checkpoint(conv_id, previos[-1]),
+          "creado": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    cp["firma"] = registro.firmar_checkpoint(claves.derivar_clave_registro(_MASTER, conv_id), conv_id, cp)
+    conn.execute("INSERT INTO checkpoints (convocatoria_id, seq, n, root, prev, creado, firma) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (conv_id, seq, cp["n"], cp["root"], cp["prev"], cp["creado"], cp["firma"]))
+    return cp
 
 
 def require_admin(x_admin_token: str | None = Header(default=None)):
@@ -169,6 +217,8 @@ async def cambiar_estado(conv_id: str, payload: dict = {}):
             if nuevo_estado == "archivada":
                 conn.execute("UPDATE convocatorias SET secreto_hmac = X'00' WHERE id = ?", (conv_id,))
             conn.execute("UPDATE convocatorias SET estado = ? WHERE id = ?", (nuevo_estado, conv_id))
+            if nuevo_estado == "cerrada":
+                _sellar(conn, conv_id, forzar=True)  # checkpoint final: nada queda sin sellar al cerrar
     return {"id": conv_id, "estado_anterior": estado_actual, "estado_nuevo": nuevo_estado}
 
 
@@ -221,12 +271,13 @@ async def crear_convocatoria(payload: dict):
     _fechas(emision_abre_en, voto_abre_en, cierra_en)
     conv_id = str(uuid.uuid4())
     Y = _emisor_de(conv_id).Y
+    log_pub = PrivateKey(claves.derivar_clave_registro(_MASTER, conv_id)).public_key.format().hex()
     with closing(_get_conn()) as conn:
         conn.execute(
-            "INSERT INTO convocatorias (id, propuesta_id, titulo, texto_sha256, opciones_json, modo_elegibilidad, nivel_garantia, emision_abre_en, voto_abre_en, cierra_en, estado, emisor_pub_hex, emisor_pub_sha256, secreto_hmac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO convocatorias (id, propuesta_id, titulo, texto_sha256, opciones_json, modo_elegibilidad, nivel_garantia, emision_abre_en, voto_abre_en, cierra_en, estado, emisor_pub_hex, emisor_pub_sha256, log_pub_hex, secreto_hmac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (conv_id, 1, titulo, hashlib.sha256(texto.encode()).hexdigest(), json.dumps(opciones), modo, nivel,
              emision_abre_en, voto_abre_en, cierra_en, "borrador", Y.hex(), hashlib.sha256(Y).hexdigest(),
-             secrets.token_bytes(32)),
+             log_pub, secrets.token_bytes(32)),
         )
     return {"id": conv_id, "estado": "borrador"}
 
@@ -253,14 +304,15 @@ async def ver_convocatoria(conv_id: str):
         raise HTTPException(400, "convocatoria_id inválido")
     with closing(_get_conn()) as conn:
         row = conn.execute(
-            "SELECT titulo, texto_sha256, opciones_json, modo_elegibilidad, estado, emisor_pub_hex, emisor_pub_sha256, emision_abre_en, voto_abre_en, cierra_en FROM convocatorias WHERE id = ?",
+            "SELECT titulo, texto_sha256, opciones_json, modo_elegibilidad, estado, emisor_pub_hex, emisor_pub_sha256, emision_abre_en, voto_abre_en, cierra_en, log_pub_hex FROM convocatorias WHERE id = ?",
             (conv_id,),
         ).fetchone()
     if not row:
         raise HTTPException(404, "Convocatoria no encontrada")
     return {"id": conv_id, "titulo": row[0], "texto_sha256": row[1], "opciones": json.loads(row[2]),
             "modo_elegibilidad": row[3], "estado": row[4], "emisor_pub_hex": row[5],
-            "emisor_pub_sha256": row[6], "emision_abre_en": row[7], "voto_abre_en": row[8], "cierra_en": row[9]}
+            "emisor_pub_sha256": row[6], "emision_abre_en": row[7], "voto_abre_en": row[8], "cierra_en": row[9],
+            "log_pub_hex": row[10]}
 
 
 # ---------- censo ----------
@@ -523,14 +575,65 @@ async def descargar_urna(conv_id: str):
         estado, emisor_pub_hex = row
         if estado not in ("cerrada", "escrutada", "archivada"):
             raise HTTPException(400, f"Urna solo disponible para convocatorias cerradas (estado: {estado})")
-        votos = _datos_urna(conn, conv_id)
+        votos = _votos_ordenados(conn, conv_id)
+        log_pub = conn.execute("SELECT log_pub_hex FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()[0]
+        checkpoints = _checkpoints(conn, conv_id)
     return {
         "convocatoria_id": conv_id,
         "emisor_pub_hex": emisor_pub_hex,
         "total_votos": len(votos),
-        "urna_sha256": urna_sha256(votos),
-        "votos": [{"r_prima": r.hex(), "s_prima": s.hex(), "opcion": op} for r, s, op in votos],
+        "urna_sha256": urna_sha256([(r, s, op) for r, s, op, _ in votos]),
+        "votos": [{"r_prima": r.hex(), "s_prima": s.hex(), "opcion": op, "lote": lote} for r, s, op, lote in votos],
+        "registro": {"log_pub_hex": log_pub, "checkpoints": checkpoints},
     }
+
+
+@app.get("/convocatorias/{conv_id}/registro")
+async def ver_registro(conv_id: str):
+    """Checkpoints firmados y encadenados de la urna (sin contenido de votos). Pensado para observadores."""
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    with closing(_get_conn()) as conn:
+        row = conn.execute("SELECT log_pub_hex FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Convocatoria no encontrada")
+        return {"convocatoria_id": conv_id, "log_pub_hex": row[0], "checkpoints": _checkpoints(conn, conv_id)}
+
+
+@app.post("/convocatorias/{conv_id}/registro/sellar", dependencies=ADMIN)
+async def sellar_registro(conv_id: str):
+    """Sella ya los votos pendientes (útil desde un cron para acotar la ventana sin sellar)."""
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    with closing(_get_conn()) as conn:
+        if not conn.execute("SELECT 1 FROM convocatorias WHERE id = ?", (conv_id,)).fetchone():
+            raise HTTPException(404, "Convocatoria no encontrada")
+        with _tx(conn):
+            cp = _sellar(conn, conv_id)
+    return {"sellado": cp is not None, "checkpoint": cp}
+
+
+@app.get("/convocatorias/{conv_id}/registro/inclusion")
+async def prueba_de_inclusion(conv_id: str, r_prima: str):
+    """Prueba de inclusión de un voto concreto (el votante conoce su r') en el checkpoint de su lote."""
+    if not _validar_convocatoria_id(conv_id):
+        raise HTTPException(400, "convocatoria_id inválido")
+    try:
+        r = bytes.fromhex(r_prima)
+    except ValueError:
+        raise HTTPException(400, "r_prima debe ser hex")
+    if len(r) != 33:
+        raise HTTPException(400, "r_prima debe tener 33 bytes")
+    with closing(_get_conn()) as conn:
+        if not conn.execute("SELECT 1 FROM convocatorias WHERE id = ?", (conv_id,)).fetchone():
+            raise HTTPException(404, "Convocatoria no encontrada")
+        sellados = _votos_ordenados(conn, conv_id, solo_sellados=True)
+        idx = next((i for i, v in enumerate(sellados) if v[0] == r), None)
+        if idx is None:
+            raise HTTPException(404, "Ese voto no consta en ningún checkpoint (¿aún sin sellar?)")
+        cp = next(c for c in _checkpoints(conn, conv_id) if c["seq"] == sellados[idx][3])
+    hojas = registro.hojas_de_votos([(a, b, c) for a, b, c, _ in sellados[:cp["n"]]])
+    return {"checkpoint": cp, "indice": idx, "n": cp["n"], "camino": [h.hex() for h in registro.camino(hojas, idx)]}
 
 
 @app.post("/convocatorias/{conv_id}/votos")
@@ -567,6 +670,11 @@ async def votar(conv_id: str, payload: dict):
             if "UNIQUE" in str(exc):
                 raise HTTPException(status_code=409, detail="Token gastado")
             raise
+        sin_sellar = conn.execute(
+            "SELECT COUNT(*) FROM votos WHERE convocatoria_id = ? AND lote IS NULL", (conv_id,)).fetchone()[0]
+        if sin_sellar >= _checkpoint_cada():
+            with _tx(conn):
+                _sellar(conn, conv_id)
     return {"id": r_hex}
 
 

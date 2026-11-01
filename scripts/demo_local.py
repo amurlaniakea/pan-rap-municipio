@@ -41,9 +41,11 @@ def main(argv=None) -> int:
     _llamar(args.api, token, "POST", f"/convocatorias/{cid}/censo", {"identificadores": creds})
     for estado in ("programada", "emision"):
         _llamar(args.api, token, "PATCH", f"/convocatorias/{cid}/estado", {"estado": estado})
+    log_pub = _llamar(args.api, token, "GET", f"/convocatorias/{cid}")["log_pub_hex"]
     print(f"Convocatoria lista: {cid}")
     print(f"  Abre en el navegador: {args.api}/ui/   (o directamente {args.api}/ui/?conv={cid})")
     print(f"  Credenciales para votar: {', '.join(creds)}  (una sola vez cada una)")
+    print(f"  Observador (otra terminal, durante la votación): python scripts/observador.py {cid} --api {args.api} --log-pub {log_pub} --cada 10")
     print(f"  Para cerrar y ver el recuento: PATCH {args.api}/convocatorias/{cid}/estado con {{\"estado\":\"cerrada\"}}, "
           f"luego GET {args.api}/convocatorias/{cid}/escrutinio")
     return 0

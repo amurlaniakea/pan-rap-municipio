@@ -13,3 +13,11 @@ def urna_sha256(votos) -> str:
             raise ValueError("opción demasiado larga")
         h.update(bytes(r) + bytes(s) + bytes([len(ob)]) + ob)
     return h.hexdigest()
+
+
+def hoja_voto(r_prima: bytes, s_prima: bytes, opcion: str) -> bytes:
+    """Contenido de la hoja del registro de un voto: r(33) ‖ s(32) ‖ len(opción) ‖ opción."""
+    ob = opcion.encode()
+    if len(ob) > 255:
+        raise ValueError("opción demasiado larga")
+    return bytes(r_prima) + bytes(s_prima) + bytes([len(ob)]) + ob

@@ -38,7 +38,7 @@ def test_votacion_completa(api):
     urna = api.client.get(f"/convocatorias/{cid}/urna").json()
     ver = _verificador()
     r = ver.verificar_urna(urna, clave_Y(api, cid), cid)
-    assert r == {"validos": 3, "invalidos": 0, "duplicados": 0, "total_ok": True, "hash_ok": True}
+    assert r == {"validos": 3, "invalidos": 0, "duplicados": 0, "total_ok": True, "hash_ok": True, "problemas_registro": []}
     assert urna["urna_sha256"] == esc["urna_sha256"]
     # el verificador detecta manipulación
     urna["votos"][0]["opcion"] = "abstencion"

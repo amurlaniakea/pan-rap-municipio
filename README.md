@@ -49,7 +49,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 | **Modos de Elegibilidad** | Solo `padron` (censo HMAC). `presencial`, `aval` y `eid` **no están implementados** (los endpoints devuelven 501) |
 | **Claves** | Una clave de firma por convocatoria, derivada de la clave maestra del emisor: una firma no vale en otra convocatoria |
 | **Administración** | Endpoints de gestión protegidos con `X-Admin-Token` (`PANRAP_ADMIN_TOKEN`, ≥ 32 caracteres) |
-| **Urna** | Sin `usuario_id`, sin timestamps, `WITHOUT ROWID`; se publica ordenada por `r_prima` |
+| **Urna** | Sin `usuario_id`; `WITHOUT ROWID`; al cierre se publica con su lote. Durante la votación, checkpoints firmados y encadenados (raíz Merkle) sin contenido de votos |
 | **Anti-Doble-Gasto** | `PRIMARY KEY (convocatoria_id, r_prima)` |
 | **Censo** | Solo se guarda `persona_ref` = HMAC-SHA256(secreto de la convocatoria, identificador); los identificadores no se almacenan |
 | **Verificación** | Script independiente que audita la urna completa |
@@ -308,15 +308,28 @@ npm ci && node frontend/build.js        # regenera frontend/ui/voto.bundle.js y 
 cd frontend && sha256sum -c SHA256SUMS  # comprueba el hash publicado
 ```
 
+### Registro verificable de la urna (observadores)
+
+Durante la votación el servidor sella los votos en checkpoints firmados y encadenados (`GET /convocatorias/{conv_id}/registro`). Para que sirva de algo, **alguien tiene que archivarlos fuera del servidor**:
+
+```bash
+# En otra máquina, durante toda la votación (fija --log-pub con la clave anunciada ANTES de abrir):
+python scripts/observador.py <conv_id> --api http://servidor:8000 --log-pub <66 hex> --archivo mi_archivo.jsonl --cada 60
+# Al cerrar, comprueba la urna contra lo que tú archivaste:
+python scripts/verificador_independiente.py <conv_id> --api http://servidor:8000 --Y <hex> --log-pub <hex> --archivo mi_archivo.jsonl
+```
+
+`PANRAP_CHECKPOINT_CADA` (por defecto 20) fija cada cuántos votos se sella un checkpoint; el administrador puede forzarlo con `POST /convocatorias/{conv_id}/registro/sellar`. Al cerrar siempre se sella el último. Qué detecta y qué no: [modelo de confianza](docs/04-modelo-de-confianza.md#registro-verificable-de-la-urna-fase-7). El esquema de la BD pasa a v3: borra la BD de pruebas antigua.
+
 ### Verificar la Urna
 
 ```bash
 # Script independiente (solo biblioteca estándar + la verificación Schnorr): no usa la BD ni claves privadas.
 # Lo ideal es pasar la clave pública Y obtenida por otro canal (acta, registro público) con --Y.
-python scripts/verificador_independiente.py <conv_id> --api http://localhost:8000 --Y <66 caracteres hex>
+python scripts/verificador_independiente.py <conv_id> --api http://localhost:8000 --Y <66 caracteres hex> --log-pub <66 caracteres hex>
 
 # Salida correcta (código 0):  VERIFICACIÓN: N válidos, 0 inválidos, 0 duplicados
-# Código 10 si hay firmas inválidas, duplicados, recuento o hash incoherentes.
+# Código 10 si hay firmas inválidas, duplicados, recuento, hash o registro de checkpoints incoherentes.
 ```
 
 ---
@@ -391,7 +404,8 @@ Una auditoría independiente (2026-10-31, ejecutando el código) encontró que e
 | Cliente web incompatible con el servidor (hash del desafío, convocatoria fija, endpoint, `sid` enviado con el voto) | ✅ reescrito, con tests de interoperabilidad JS↔Python y votación real |
 | Modos `presencial`, `aval`, `eid` | ❌ no implementados |
 | Las fechas de la convocatoria no se aplican (el estado se cambia a mano) | ℹ️ por diseño de este prototipo |
-| Anonimato frente al operador, emisor que puede fabricar votos, urna sin compromiso verificable durante la votación | ℹ️ ver [modelo de confianza](docs/04-modelo-de-confianza.md) |
+| Urna sin compromiso verificable durante la votación | ✅ checkpoints firmados + observador (Fase 7); quedan los votos sin sellar y la necesidad de observadores independientes |
+| Anonimato frente al operador y emisor que puede fabricar votos | ℹ️ límites de diseño, ver [modelo de confianza](docs/04-modelo-de-confianza.md) |
 
 ---
 
