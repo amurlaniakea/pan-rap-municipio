@@ -20,6 +20,9 @@ const post = (fetchFn, url, cuerpo) => pedir(fetchFn, url, {
   body: JSON.stringify(cuerpo),
 });
 
+export const listarConvocatorias = (base = '', fetchFn = globalThis.fetch) =>
+  pedir(fetchFn, `${base}/convocatorias`);
+
 export const cargarConvocatoria = (conv_id, base = '', fetchFn = globalThis.fetch) =>
   pedir(fetchFn, `${base}/convocatorias/${encodeURIComponent(conv_id)}`);
 

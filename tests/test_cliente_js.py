@@ -146,3 +146,71 @@ def test_hash_publicado_coincide_con_el_bundle():
     linea = (RAIZ / "frontend" / "SHA256SUMS").read_text().split()
     assert linea[1] == "ui/voto.bundle.js"
     assert hashlib.sha256((RAIZ / "frontend" / "ui" / "voto.bundle.js").read_bytes()).hexdigest() == linea[0]
+
+
+def _crear_abierta(base, tok, titulo="Demo", creds=("ana", "beto")):
+    s, d = _http(base, "POST", "/convocatorias", {"titulo": titulo, "texto": "x", "opciones": ["si", "no"],
+                 "emision_abre_en": "2026-11-01T00:00:00", "voto_abre_en": "2026-11-02T00:00:00",
+                 "cierra_en": "2026-11-03T00:00:00"}, tok)
+    assert s == 201
+    cid = d["id"]
+    _http(base, "POST", f"/convocatorias/{cid}/censo", {"identificadores": list(creds)}, tok)
+    for est in ("programada", "emision"):
+        _http(base, "PATCH", f"/convocatorias/{cid}/estado", {"estado": est}, tok)
+    return cid
+
+
+def _ui_js(base, conv, cred, opcion):
+    r = subprocess.run([NODE, str(RAIZ / "frontend/test/ui.mjs"), base, conv, cred, opcion],
+                       capture_output=True, text=True, cwd=RAIZ, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+@requiere_node
+def test_interfaz_publicada_vota_con_dom_real(servidor):
+    """Ejecuta el bundle publicado sobre el HTML servido, con un DOM, contra el servidor real."""
+    base, tok = servidor
+    cid = _crear_abierta(base, tok, "Presupuesto participativo")
+    r = _ui_js(base, cid, "ana", "si")
+    assert r["cargada"] and r["titulo"] == "Presupuesto participativo" and r["clave"] and r["csp"]
+    assert r["opciones"] == ["si", "no"]
+    assert r["estado"].startswith("✅"), r
+    again = _ui_js(base, cid, "ana", "no")                        # misma credencial: la UI muestra el error
+    assert again["estado"].startswith("❌") and again["clase"] == "error"
+    sin_cred = _ui_js(base, cid, "", "si")
+    assert "Introduce tu credencial" in sin_cred["estado"]
+    s, esc = _http(base, "GET", f"/convocatorias/{cid}/escrutinio")
+    assert s == 400                                               # sigue abierta
+    _http(base, "PATCH", f"/convocatorias/{cid}/estado", {"estado": "cerrada"}, tok)
+    assert _http(base, "GET", f"/convocatorias/{cid}/escrutinio")[1]["recuento"] == {"si": 1, "no": 0}
+
+
+@requiere_node
+def test_interfaz_sin_id_muestra_la_lista_y_permite_votar(servidor):
+    base, tok = servidor
+    r0 = _ui_js(base, "-", "x", "si")
+    assert r0["lista"] == [] and not r0["cargada"]            # sin convocatorias abiertas: no hay lista ni panel
+    _crear_abierta(base, tok, "Primera", creds=("carla",))
+    r = _ui_js(base, "-", "carla", "no")
+    assert r["lista"] == ["Primera"] and r["cargada"] and r["estado"].startswith("✅"), r
+
+
+def test_raiz_redirige_a_la_ui_y_lista_convocatorias_abiertas(api):
+    from helpers_api import crear_conv
+    r = api.client.get("/", follow_redirects=False)
+    assert r.status_code in (302, 307) and r.headers["location"] == "/ui/"
+    assert api.client.get("/convocatorias").json() == []
+    abierta = crear_conv(api, ["a"], estado="emision")
+    crear_conv(api, ["a"], estado="programada")                   # no abierta: no aparece
+    lista = api.client.get("/convocatorias").json()
+    assert [c["id"] for c in lista] == [abierta] and set(lista[0]) == {"id", "titulo", "estado"}
+
+
+def test_demo_local_deja_una_convocatoria_lista_para_votar(servidor):
+    base, tok = servidor
+    r = subprocess.run([sys.executable, str(RAIZ / "scripts" / "demo_local.py"), "--api", base, "--votantes", "2"],
+                       capture_output=True, text=True, env={**os.environ, "PANRAP_ADMIN_TOKEN": tok}, cwd=RAIZ)
+    assert r.returncode == 0, r.stderr
+    assert "votante1, votante2" in r.stdout and "/ui/?conv=" in r.stdout
+    assert len(_http(base, "GET", "/convocatorias")[1]) == 1

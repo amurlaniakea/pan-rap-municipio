@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from elegibilidad import Padron
@@ -228,6 +229,21 @@ async def crear_convocatoria(payload: dict):
              secrets.token_bytes(32)),
         )
     return {"id": conv_id, "estado": "borrador"}
+
+
+@app.get("/", include_in_schema=False)
+async def raiz():
+    return RedirectResponse("/ui/")
+
+
+@app.get("/convocatorias")
+async def listar_convocatorias():
+    """Convocatorias abiertas (emisión o votación): datos públicos para que el votante elija sin conocer el id."""
+    with closing(_get_conn()) as conn:
+        filas = conn.execute(
+            "SELECT id, titulo, estado FROM convocatorias WHERE estado IN ('emision', 'votacion') ORDER BY titulo, id"
+        ).fetchall()
+    return [{"id": i, "titulo": t, "estado": e} for i, t, e in filas]
 
 
 @app.get("/convocatorias/{conv_id}")

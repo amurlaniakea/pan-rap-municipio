@@ -292,7 +292,16 @@ Solo está implementado el modo **`padron`** (flujo anterior). `presencial`, `av
 
 ### Votar desde el navegador
 
-Con el servidor en marcha, abre `http://localhost:8000/ui/?conv=<conv_id>`: el navegador pide la clave pública de la convocatoria, calcula la firma ciega (`a` y `b` nunca salen de él) y envía el voto sin el id de sesión. Para reconstruir y verificar el bundle:
+La forma más rápida de verlo funcionar en local:
+
+```bash
+export PANRAP_ADMIN_TOKEN="$(openssl rand -hex 32)" PANRAP_ALLOW_EPHEMERAL_KEY=1
+uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
+# en otra terminal (con el mismo PANRAP_ADMIN_TOKEN exportado):
+python scripts/demo_local.py          # crea una convocatoria abierta y muestra las credenciales (votante1…)
+```
+
+Abre `http://127.0.0.1:8000/` (redirige a `/ui/`): la página lista las convocatorias abiertas. También puedes ir directo a `http://localhost:8000/ui/?conv=<conv_id>`: el navegador pide la clave pública de la convocatoria, calcula la firma ciega (`a` y `b` nunca salen de él) y envía el voto sin el id de sesión. Para reconstruir y verificar el bundle:
 
 ```bash
 npm ci && node frontend/build.js        # regenera frontend/ui/voto.bundle.js y frontend/SHA256SUMS

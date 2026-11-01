@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Pedro Sordo Martínez <amurlaniakea@gmail.com>
 // Interfaz mínima. Solo textContent (nunca innerHTML) y sin scripts ni estilos en línea (CSP estricta).
-import { cargarConvocatoria, flujoVoto, enviarVoto } from './voto_schnorr.mjs';
+import { cargarConvocatoria, flujoVoto, enviarVoto, listarConvocatorias } from './voto_schnorr.mjs';
 
 const $ = (id) => document.getElementById(id);
 let conv = null;
@@ -73,8 +73,30 @@ async function reintentar() {
   }
 }
 
+async function mostrarLista() {
+  try {
+    const lista = await listarConvocatorias();
+    const caja = $('lista');
+    caja.replaceChildren();
+    if (lista.length === 0) {
+      caja.textContent = 'No hay convocatorias abiertas ahora mismo.';
+      return;
+    }
+    for (const c of lista) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn';
+      b.textContent = c.titulo;
+      b.addEventListener('click', () => { $('conv').value = c.id; cargar(); });
+      caja.append(b);
+    }
+  } catch (e) {
+    estado(`No se pudo obtener la lista de convocatorias: ${e.message}`, 'error');
+  }
+}
+
 const params = new URLSearchParams(location.search);
 if (params.get('conv')) $('conv').value = params.get('conv');
 $('cargar').addEventListener('click', cargar);
 $('reintentar').addEventListener('click', reintentar);
-if ($('conv').value) cargar();
+if ($('conv').value) cargar(); else mostrarLista();
