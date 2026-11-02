@@ -308,6 +308,10 @@ npm ci && node frontend/build.js        # regenera frontend/ui/voto.bundle.js y 
 cd frontend && sha256sum -c SHA256SUMS  # comprueba el hash publicado
 ```
 
+### Cambio de clave maestra
+
+Cada convocatoria publica las claves derivadas de la clave maestra con la que se creó. Si el servidor arranca con **otra** clave (p. ej. una clave efímera nueva), `emision/inicio`, `votos` y el sellado devuelven `503` **antes** de consumir ninguna emisión ni firmar nada, y al arrancar se avisa por la salida de errores de las convocatorias afectadas (`PANRAP_ESTRICTO=1` hace que el arranque falle). Restaurar la clave correcta restablece el servicio. Guarda y respalda la clave maestra: sin ella, las convocatorias abiertas no se pueden continuar.
+
 ### Registro verificable de la urna (observadores)
 
 Durante la votación el servidor sella los votos en checkpoints firmados y encadenados (`GET /convocatorias/{conv_id}/registro`). Para que sirva de algo, **alguien tiene que archivarlos fuera del servidor**:
@@ -415,6 +419,7 @@ Una auditoría independiente (2026-10-31, ejecutando el código) encontró que e
 - [02-investigacion-rfc9474.md](docs/02-investigacion-rfc9474.md) — Investigación de RSA Blind (alternativa)
 - [03-motor-blind-schnorr.md](docs/03-motor-blind-schnorr.md) — Motor actual (Blind Schnorr)
 - [04-modelo-de-confianza.md](docs/04-modelo-de-confianza.md) — Qué garantiza y qué no garantiza el sistema
+- [05-paquete-auditoria.md](docs/05-paquete-auditoria.md) — Alcance, propiedades, adversarios y preguntas para la auditoría externa (Fase 6b)
 - [RFC 9474](https://www.rfc-editor.org/rfc/rfc9474) — RSABSSA (referencia)
 
 ---

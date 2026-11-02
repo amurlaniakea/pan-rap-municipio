@@ -36,3 +36,18 @@ def test_scripts_y_main_sin_dependencias_no_declaradas():
     req = (RAIZ / "requirements.txt").read_text().lower()
     for f in [RAIZ / "main.py", *(RAIZ / "scripts").glob("*.py")]:
         assert "import requests" not in f.read_text() or "requests" in req, f.name
+
+
+def test_paquete_de_auditoria_solo_cita_tests_que_existen():
+    """Evita que docs/05-paquete-auditoria.md afirme pruebas que ya no existen o cambiaron de nombre."""
+    import re
+    doc = (RAIZ / "docs" / "05-paquete-auditoria.md").read_text()
+    citados = re.findall(r"`?(test_[a-z0-9_]+\.py)::(test_[a-z0-9_]+)`?", doc)
+    assert citados, "el paquete debería citar al menos una prueba concreta"
+    # «::test_x» encadenados tras un fichero comparten fichero
+    ficheros = re.findall(r"(test_[a-z0-9_]+\.py)((?:::test_[a-z0-9_]+(?:`, `)?)+)", doc)
+    pares = {(f, n) for f, resto in ficheros for n in re.findall(r"test_[a-z0-9_]+", resto)} | set(citados)
+    faltan = [(f, n) for f, n in sorted(pares) if f"def {n}(" not in (RAIZ / "tests" / f).read_text()]
+    assert not faltan, f"pruebas citadas que no existen: {faltan}"
+    for f in set(re.findall(r"`(test_[a-z0-9_]+\.py)`", doc)):
+        assert (RAIZ / "tests" / f).exists(), f

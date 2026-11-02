@@ -9,8 +9,9 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import uuid
-from contextlib import closing, contextmanager
+from contextlib import asynccontextmanager, closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -102,10 +103,40 @@ def _votos_ordenados(conn, conv_id, solo_sellados=False):
     ).fetchall()
 
 
+def _claves_coinciden(conv_id: str, emisor_pub_hex: str, log_pub_hex: str) -> bool:
+    """¿La clave maestra actual deriva las claves publicadas por la convocatoria? (si no, hubo cambio de clave)."""
+    if _emisor_de(conv_id).Y.hex() != emisor_pub_hex:
+        return False
+    if log_pub_hex:
+        return PrivateKey(claves.derivar_clave_registro(_MASTER, conv_id)).public_key.format().hex() == log_pub_hex
+    return True
+
+
+def _exigir_claves(conv_id: str, emisor_pub_hex: str, log_pub_hex: str) -> None:
+    """Falla ANTES de consumir una emisión o firmar un checkpoint si la clave del servidor no es la de la convocatoria."""
+    if not _claves_coinciden(conv_id, emisor_pub_hex, log_pub_hex):
+        raise HTTPException(503, "La clave del servidor no corresponde a esta convocatoria (¿cambió la clave maestra?). "
+                                 "No se ha consumido ninguna emisión.")
+
+
+def _avisar_claves_incoherentes() -> None:
+    """Al arrancar: avisa de las convocatorias no archivadas cuyas claves no coinciden con la clave maestra actual."""
+    with closing(_get_conn()) as conn:
+        filas = conn.execute("SELECT id, emisor_pub_hex, log_pub_hex FROM convocatorias WHERE estado != 'archivada'").fetchall()
+    malas = [f[0] for f in filas if not _claves_coinciden(*f)]
+    if malas:
+        print("ADVERTENCIA: la clave maestra actual NO corresponde a estas convocatorias; sus emisiones, votos y sellados "
+              f"se rechazarán con 503 hasta restaurar la clave correcta: {', '.join(malas)}", file=sys.stderr)
+        if os.getenv("PANRAP_ESTRICTO") == "1":
+            raise RuntimeError("PANRAP_ESTRICTO=1: clave maestra incoherente con convocatorias existentes")
+
+
 def _sellar(conn, conv_id, forzar=False):
     """Sella los votos sin lote en un checkpoint firmado y encadenado. El llamador abre la transacción.
 
     forzar=True crea el primer checkpoint aunque no haya votos (cierre de una convocatoria sin votos)."""
+    _exigir_claves(conv_id, *conn.execute(
+        "SELECT emisor_pub_hex, log_pub_hex FROM convocatorias WHERE id = ?", (conv_id,)).fetchone())
     pendientes = conn.execute(
         "SELECT 1 FROM votos WHERE convocatoria_id = ? AND lote IS NULL LIMIT 1", (conv_id,)).fetchone()
     previos = _checkpoints(conn, conv_id)
@@ -134,7 +165,13 @@ def require_admin(x_admin_token: str | None = Header(default=None)):
 
 ADMIN = [Depends(require_admin)]
 
-app = FastAPI()
+@asynccontextmanager
+async def _vida(_app):
+    _avisar_claves_incoherentes()
+    yield
+
+
+app = FastAPI(lifespan=_vida)
 
 
 # ---------- validación de entrada ----------
@@ -357,12 +394,13 @@ async def inicio(conv_id: str, payload: dict = {}):
     if not 1 <= len(credencial) <= 128:
         raise HTTPException(status_code=400, detail=MENSAJE_GENERICO)
     with closing(_get_conn()) as conn:
-        row = conn.execute("SELECT estado, secreto_hmac FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
+        row = conn.execute("SELECT estado, secreto_hmac, emisor_pub_hex, log_pub_hex FROM convocatorias WHERE id = ?", (conv_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
-        estado, secreto = row
+        estado, secreto, emisor_pub_hex, log_pub_hex = row
         if estado not in _ESTADOS_ABIERTOS:
             raise HTTPException(status_code=400, detail=f"Convocatoria no abierta (estado: {estado})")
+        _exigir_claves(conv_id, emisor_pub_hex, log_pub_hex)
         ref = Padron(secreto).derivar_ref(conv_id, credencial)
         em = _emisor_de(conv_id)
         bloqueada = False
@@ -651,15 +689,16 @@ async def votar(conv_id: str, payload: dict):
         raise HTTPException(status_code=400, detail="r_prima (33 bytes) o s_prima (32 bytes) con longitud incorrecta")
     with closing(_get_conn()) as conn:
         row = conn.execute(
-            "SELECT estado, opciones_json, emisor_pub_hex FROM convocatorias WHERE id = ?", (conv_id,)
+            "SELECT estado, opciones_json, emisor_pub_hex, log_pub_hex FROM convocatorias WHERE id = ?", (conv_id,)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
-        estado, opciones_json, emisor_pub_hex = row
+        estado, opciones_json, emisor_pub_hex, log_pub_hex = row
         if estado not in _ESTADOS_ABIERTOS:
             raise HTTPException(status_code=400, detail=f"Convocatoria no abierta para votar (estado: {estado})")
         if opcion not in json.loads(opciones_json):
             raise HTTPException(status_code=400, detail="Opción no válida para esta convocatoria")
+        _exigir_claves(conv_id, emisor_pub_hex, log_pub_hex)
         # La verificación usa la clave Y publicada de ESTA convocatoria (D7)
         if not urna_schnorr.verificar(bytes.fromhex(emisor_pub_hex), conv_id, opcion, r_prima, s_prima):
             raise HTTPException(status_code=400, detail="Verificación fallida")
