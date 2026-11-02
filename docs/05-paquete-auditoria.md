@@ -18,7 +18,7 @@ Una revisión criptográfica y de seguridad de aplicación del prototipo **PAN-R
 | 1 | `main.py` (`inicio`, `fin`, `votar`, `_sellar`, `_exigir_claves`) | ~250 de 721 | Transaccionalidad de la emisión, guarda de claves, validación de votos, sellado de checkpoints |
 | 2 | `registro.py` | 173 | Árbol de Merkle RFC 6962, checkpoints firmados y encadenados, verificación, equivocación |
 | 2 | `scripts/verificador_independiente.py`, `scripts/observador.py` | 115 + 103 | Verificación pública y archivo de checkpoints |
-| 2 | `frontend/src/*.mjs`, `frontend/build.js`, `frontend/ui/*` | ~260 | Cliente del votante (cegado en el navegador), CSP, bundle reproducible |
+| 2 | `frontend/src/*.mjs`, `frontend/build.js`, `frontend/ui/*` | ~483 (+ HTML y CSS) | Cliente del votante (cegado en el navegador), CSP, bundle reproducible |
 | 3 | `backend/schema.sql`, autenticación de administración y validación de entradas en `main.py` | 57 | Esquema v3, `X-Admin-Token`, restricciones de estado |
 
 **Fuera de alcance:** modos de elegibilidad `presencial`, `aval` y `eid` (no implementados; los endpoints devuelven 501), despliegue (TLS, proxy, backups, rotación y custodia de la clave maestra), infraestructura de observadores, y los tests heredados marcados `xfail` (`test_voting_rules.py`, `test_capacity_constraints.py`, `test_proposal_workflow.py`).
@@ -37,6 +37,7 @@ Una revisión criptográfica y de seguridad de aplicación del prototipo **PAN-R
 | P8 | Un reinicio con otra clave maestra no consume emisiones ni firma checkpoints | `_exigir_claves` | `test_guarda_claves.py` |
 | P9 | Registro: retirar o alterar un voto sellado, o reescribir la historia, es detectable con observadores | `registro.py`, `_sellar` | `test_registro.py`, `test_registro_api.py` (con mutantes) |
 | P10 | El cliente produce tokens que la urna acepta; el bundle publicado se reconstruye idéntico | `frontend/src/voto_core.mjs`, `build.js` | `test_cliente_js.py` (vectores JS↔Python, votación real desde Node, UI con DOM), CI |
+| P12 | El votante puede verificar su voto en el navegador (token, camino Merkle, firma del checkpoint) y el comprobante es opcional y no contiene la credencial | `frontend/src/registro.mjs`, `voto_schnorr.mjs::verificarMiVoto` | `test_cliente_js.py::test_comprobante_opcional_se_genera_y_se_verifica_en_el_navegador`, `::test_comprobante_desactivado_por_defecto_no_genera_ningun_documento`, `::test_merkle_js_coincide_con_python_y_rechaza_pruebas_falsas` |
 | P11 | El censo no guarda identificadores en claro | `Padron.derivar_ref`, `cargar_censo` | `test_flujo_api.py::test_censo_inserta_personas_y_no_guarda_identificadores` |
 
 Las pruebas se comprobaron con **mutantes** (reintroducir a propósito los fallos: auth que siempre pasa, borrar emisiones ajenas, verificar con una clave global, no sellar al cerrar, no recalcular raíces, quitar la guarda de claves) y fallan en todos ellos.
@@ -76,6 +77,7 @@ Se declaran **no cubiertos** (ver modelo de confianza): A3 (correlación), el re
 11. Revisión de la superficie de la API: validación de entradas, inyección SQL (consultas parametrizadas; el único SQL construido por concatenación en `actualizar_convocatoria` usa nombres de columna constantes), control de estados, ausencia de límites de tasa, y un único `X-Admin-Token` compartido.
 12. Cliente: política CSP (`default-src 'none'; script-src 'self'; …`), generación de aleatoriedad, dependencias (`@noble/curves` 1.9.7, `@noble/hashes` 2.4.0, `esbuild` 0.28.2, fijadas) y reproducibilidad del bundle. ¿Qué mecanismo recomiendan para que el votante verifique que el JavaScript servido es el publicado?
 13. Privacidad: anonimato frente al operador (A3). ¿Qué combinación de retardos aleatorios, mezcla o canal anónimo recomiendan como mínimo para un piloto?
+14. Comprobante opcional: ¿es aceptable que exista (aun desactivado por defecto) dado el riesgo de coacción y compra de votos? ¿Hay una forma de dar verificabilidad individual sin comprobante transferible (p. ej. verificación inmediata sin guardar nada, o pruebas deniables)?
 
 ## 6. Cómo reproducir
 

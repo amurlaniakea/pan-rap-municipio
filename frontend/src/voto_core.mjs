@@ -98,3 +98,17 @@ export function blindar({ Y_hex, R_hex, conv_id, opcion, a_hex, b_hex }) {
     };
   }
 }
+
+/** Comprueba un token (R', s') contra Y: s'·G = R' + e'·Y con e' = SHA-256(T‖T‖R'‖Y‖m) mod q. Nunca lanza: false si algo falla. */
+export function verificarToken({ Y_hex, conv_id, opcion, r_prima_hex, s_prima_hex }) {
+  try {
+    const Y = Point.fromHex(Y_hex);
+    const Rp = Point.fromHex(r_prima_hex);
+    const s = aBigInt(hexABytes(s_prima_hex));
+    if (s <= 0n || s >= N) return false;
+    const ep = aBigInt(sha256(concat(T, T, Rp.toRawBytes(true), Y.toRawBytes(true), mensaje(conv_id, opcion)))) % N;
+    return ep !== 0n && G.multiply(s).equals(Rp.add(Y.multiply(ep)));
+  } catch {
+    return false;
+  }
+}

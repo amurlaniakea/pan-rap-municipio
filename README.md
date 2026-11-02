@@ -10,13 +10,13 @@
 
 Sistema de votación anónima con integridad criptográfica para gobernanza cívica municipal
 
-> ⚠️ **Estado real: prototipo.** La firma ciega (Blind Schnorr) está implementada y probada; el flujo de extremo a extremo (servidor, verificador y cliente web) quedó estabilizado en la Fase 6a; ver [estado y limitaciones](#-estado-y-limitaciones-conocidas). **No usar en elecciones reales.** El **cliente web** (`/ui`) es nuevo: está probado contra el servidor real, pero sin auditoría ni pruebas en navegadores concretos.
+> ⚠️ **Estado real: prototipo.** La firma ciega (Blind Schnorr) está implementada y probada; el flujo de extremo a extremo (servidor, cliente web, verificador y registro verificable de la urna) está implementado y probado; ver [estado y limitaciones](#-estado-y-limitaciones-conocidas). **No usar en elecciones reales:** falta la auditoría criptográfica externa y el cliente web no se ha probado en navegadores concretos.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-yellow?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.103+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![secp256k1](https://img.shields.io/badge/Curva-secp256k1-orange?logo=bitcoin&logoColor=white)](https://en.bitcoin.it/wiki/Secp256k1)
-[![Status: Prototipo](https://img.shields.io/badge/Estado-Prototipo%20(Fase%206a)-orange)](#-roadmap)
+[![Status: Prototipo](https://img.shields.io/badge/Estado-Prototipo%20(Fase%207)-orange)](#-roadmap)
 
 </div>
 
@@ -31,7 +31,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 - 🔐 **Anonimato de la firma**: el emisor no ve el mensaje firmado ni el token final. Pero emisor y urna comparten proceso y operador: quien opere el servidor puede correlacionar identidad y voto por IP, tiempos o logs ([modelo de confianza](docs/04-modelo-de-confianza.md))
 - 🛡️ **Integridad criptográfica**: Cada voto es verificable públicamente sin revelar el votante
 - ⚖️ **Un voto por persona elegible**: Protocolo anti-doble-gasto con tokens ciegos únicos
-- 🔍 **Urna pública al cierre**: cada voto se verifica con la clave pública de la convocatoria; el verificador no necesita claves privadas
+- 🔍 **Urna y registro públicos**: cada voto se verifica con la clave pública de la convocatoria; durante la votación el servidor publica checkpoints firmados y encadenados que los observadores archivan, y cada votante puede comprobar (opcionalmente) que su voto consta en la urna
 
 > **Filosofía**: La tecnología debe servir a la comunidad, no al revés. PAN-RAP es software libre diseñado para empoderar asambleas ciudadanas, no para controlarlas.
 
@@ -43,7 +43,7 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 |---|---|
 | **Motor Criptográfico** | Blind Schnorr sobre secp256k1 (token de 65 bytes) |
 | **Backend** | Python 3.12+ con FastAPI y `coincurve` (libsecp256k1) |
-| **Frontend** | Cliente web mínimo en `frontend/` (`@noble/curves` vendorizado y fijado, sin CDN, CSP estricta), servido en `/ui` por el propio servidor |
+| **Frontend** | Cliente web en `frontend/` servido en `/ui` (tema claro/oscuro, sin CDN, CSP estricta, `@noble/curves` fijado y bundle reproducible); la firma ciega se calcula en el navegador |
 | **Ciclo de Vida** | Transiciones de estado validadas (`borrador` → `programada` → `emision` → `votacion` → `cerrada` → `escrutada` → `archivada`) |
 | **Acta PDF** | Generación automática con reportlab al finalizar el escrutinio |
 | **Modos de Elegibilidad** | Solo `padron` (censo HMAC). `presencial`, `aval` y `eid` **no están implementados** (los endpoints devuelven 501) |
@@ -52,51 +52,41 @@ Sistema de votación anónima con integridad criptográfica para gobernanza cív
 | **Urna** | Sin `usuario_id`; `WITHOUT ROWID`; al cierre se publica con su lote. Durante la votación, checkpoints firmados y encadenados (raíz Merkle) sin contenido de votos |
 | **Anti-Doble-Gasto** | `PRIMARY KEY (convocatoria_id, r_prima)` |
 | **Censo** | Solo se guarda `persona_ref` = HMAC-SHA256(secreto de la convocatoria, identificador); los identificadores no se almacenan |
-| **Verificación** | Script independiente que audita la urna completa |
+| **Registro de la urna** | Checkpoints por lotes (raíz Merkle RFC 6962, firmados y encadenados) sin contenido de votos; `scripts/observador.py` los archiva fuera del servidor |
+| **Comprobante opcional** | El votante puede pedir un comprobante (desactivado por defecto) y verificar en su navegador que su voto está en un checkpoint firmado |
+| **Guarda de claves** | Si cambia la clave maestra, el servidor responde 503 antes de consumir emisiones o firmar checkpoints |
+| **Verificación** | `scripts/verificador_independiente.py` audita la urna completa, el recuento y el registro con claves fijadas fuera de banda |
 
 ---
 
 ## 🏗️ Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        NAVEGADOR DEL VOTANTE                    │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  voto_schnorr.js (@noble/curves)                        │   │
-│  │  • Genera a, b ← crypto.getRandomValues()              │   │
-│  │  • Calcula R' = R + a·G + b·Y                          │   │
-│  │  • Calcula e = H(R', m) + b                            │   │
-│  │  • Recibe s, calcula s' = s + a                        │   │
-│  │  ⚠️ a y b NUNCA salen del navegador                    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │ e (público)  │              │ {opcion, R', s'}
-              ▼              │              ▼
-    ┌─────────────────┐      │    ┌─────────────────┐
-    │     EMISOR      │      │    │      URNA       │
-    │   (main.py)     │      │    │   (main.py)     │
-    │                 │      │    │                 │
-    │ • Genera k      │      │    │ • Verifica      │
-    │ • Devuelve R    │      │    │   s'·G == R'+e·Y│
-    │ • Firma: s=k+d·e│      │    │ • Inserta voto  │
-    │                 │      │    │                 │
-    │ Ve: e           │      │    │ Ve: R', s'      │
-    │ NO ve: a, b, m  │      │    │ NO ve: identidad│
-    └─────────────────┘      │    └─────────────────┘
-                             │
-                    ┌────────┴────────┐
-                    │   BASE DE DATOS │
-                    │   (SQLite)      │
-                    │                 │
-                    │ • convocatorias │
-                    │ • personas      │
-                    │ • emisiones     │
-                    │ • votos         │
-                    │   (WITHOUT ROWID)│
-                    └─────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│ NAVEGADOR DEL VOTANTE  (frontend/src → voto.bundle.js, hash en SHA256SUMS)│
+│  voto_core.mjs   a, b ← crypto.getRandomValues()   (NUNCA salen del navegador)
+│                  R' = R + a·G + b·Y ; e' = H(T‖T‖R'‖Y‖m) ; e = e' + b     │
+│                  s' = s + a ; comprueba s·G = R + e·Y antes de usar s'    │
+│  registro.mjs    [opcional] verifica tu voto: Merkle + firma del checkpoint│
+└───────────────┬───────────────────────────────────────┬───────────────────┘
+                │ e (cegado)                            │ {opción, R', s'}
+                ▼                                       ▼
+   ┌──────────────────────────┐            ┌──────────────────────────────┐
+   │ EMISOR (por convocatoria)│            │ URNA + REGISTRO              │
+   │ clave derivada de la     │            │ • verifica con la Y publicada│
+   │ clave maestra            │            │ • 1 voto por r' (sin doble   │
+   │ • una sesión abierta (S1)│            │   gasto)                     │
+   │ • s = k + d·e            │            │ • sella lotes en checkpoints │
+   │ Ve: e   NO ve: a, b, m   │            │   firmados y encadenados     │
+   └────────────┬─────────────┘            └───────────────┬──────────────┘
+                └───────────────┬──────────────────────────┘
+                       ┌────────┴─────────┐
+                       │ SQLite (v3)      │   convocatorias · personas (solo HMAC)
+                       │ WITHOUT ROWID    │   emisiones · votos (+lote) · checkpoints
+                       └──────────────────┘
+
+  OTRA MÁQUINA:  observador.py ──archiva checkpoints──▶ mi_archivo.jsonl
+                 verificador_independiente.py <── urna + registro + archivo del observador
 ```
 
 ---
@@ -277,7 +267,8 @@ curl http://localhost:8000/convocatorias/{conv_id}/escrutinio
 
 ```bash
 curl http://localhost:8000/convocatorias/{conv_id}/urna
-# Respuesta: todos los votos ordenados por r_prima (no por orden de llegada)
+# Respuesta: todos los votos con su lote, ordenados por (lote, r_prima), más el registro de checkpoints.
+# Dentro de un lote el orden es el de r_prima, no el de llegada.
 ```
 
 #### 10. Generar Acta PDF (Solo en estado escrutada)
@@ -301,12 +292,14 @@ uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
 python scripts/demo_local.py          # crea una convocatoria abierta y muestra las credenciales (votante1…)
 ```
 
-Abre `http://127.0.0.1:8000/` (redirige a `/ui/`): la página lista las convocatorias abiertas. También puedes ir directo a `http://localhost:8000/ui/?conv=<conv_id>`: el navegador pide la clave pública de la convocatoria, calcula la firma ciega (`a` y `b` nunca salen de él) y envía el voto sin el id de sesión. Para reconstruir y verificar el bundle:
+Abre `http://127.0.0.1:8000/` (redirige a `/ui/`): la página lista las convocatorias abiertas y te guía en tres pasos (elegir, votar, listo). También puedes ir directo a `http://localhost:8000/ui/?conv=<conv_id>`: el navegador pide la clave pública de la convocatoria, calcula la firma ciega (`a` y `b` nunca salen de él) y envía el voto sin el id de sesión. Para reconstruir y verificar el bundle:
 
 ```bash
 npm ci && node frontend/build.js        # regenera frontend/ui/voto.bundle.js y frontend/SHA256SUMS
 cd frontend && sha256sum -c SHA256SUMS  # comprueba el hash publicado
 ```
+
+**Comprobante opcional.** Al votar puedes marcar «Quiero un comprobante» (viene **desactivado**). Si no lo marcas, la página no genera ningún documento sobre tu voto. Si lo marcas, descargas un JSON con `convocatoria_id`, `opcion`, `r_prima` y `s_prima` (nunca tu credencial). Más tarde, en la tarjeta «Comprobar mi voto», lo pegas o cargas y el navegador comprueba tres cosas: que tu token es válido, que su hoja está en la raíz Merkle de un checkpoint y que ese checkpoint lo firmó la clave del registro. Si indicas la clave del registro anunciada antes de la votación, no hay que fiarse de la que sirve el servidor. **Aviso:** quien tenga el comprobante puede saber cómo votaste; guárdalo en privado o no lo generes.
 
 ### Cambio de clave maestra
 
@@ -385,8 +378,9 @@ Los endpoints de emisión (`/emision/inicio`) devuelven un mensaje de error gen�
 | **Fase 5** | ✅ Completada | Migración completa a Blind Schnorr |
 | **Fase 5.5** | ⚠️ Con defectos | Ciclo de vida, escrutinio y acta PDF; la auditoría del 2026-10-31 halló defectos de integridad en el flujo (ver abajo) |
 | **Fase 6a** | ✅ Completada | Integridad del flujo: autenticación admin, padrón, clave por convocatoria, emisión y votos robustos, verificador y cliente web |
-| **Fase 6b** | ⏳ Pendiente | **Auditoría criptográfica externa** |
-| **Fase 7** | ⏳ Pendiente | Despliegue piloto en municipio real |
+| **Fase 6b** | ⏳ Pendiente | **Auditoría criptográfica externa** (ver [paquete de auditoría](docs/05-paquete-auditoria.md)) |
+| **Fase 7** | ✅ Completada | Registro verificable de la urna, observador, guarda de claves y comprobante opcional |
+| **Fase 8** | ⏳ Pendiente | Despliegue piloto en municipio real |
 
 > ⚠️ **Estado actual**: prototipo. **NO apto para uso vinculante** hasta completar la Fase 6b (auditoría criptográfica externa).
 
@@ -409,6 +403,8 @@ Una auditoría independiente (2026-10-31, ejecutando el código) encontró que e
 | Modos `presencial`, `aval`, `eid` | ❌ no implementados |
 | Las fechas de la convocatoria no se aplican (el estado se cambia a mano) | ℹ️ por diseño de este prototipo |
 | Urna sin compromiso verificable durante la votación | ✅ checkpoints firmados + observador (Fase 7); quedan los votos sin sellar y la necesidad de observadores independientes |
+| El votante no podía comprobar que su voto consta en la urna | ✅ comprobante opcional y verificación en el navegador (desactivado por defecto: permite demostrar el voto a terceros) |
+| Reinicio con otra clave maestra: la emisión se gastaba y el voto fallaba | ✅ guarda de claves: 503 antes de consumir nada |
 | Anonimato frente al operador y emisor que puede fabricar votos | ℹ️ límites de diseño, ver [modelo de confianza](docs/04-modelo-de-confianza.md) |
 
 ---

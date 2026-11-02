@@ -219,3 +219,110 @@ def test_demo_local_deja_una_convocatoria_lista_para_votar(servidor):
     assert r.returncode == 0, r.stderr
     assert "votante1, votante2" in r.stdout and "/ui/?conv=" in r.stdout
     assert len(_http(base, "GET", "/convocatorias")[1]) == 1
+
+
+def _ui_comprobante(base, cid, cred, opcion, guardar):
+    r = subprocess.run([NODE, str(RAIZ / "frontend/test/ui_comprobante.mjs"), base, cid, cred, opcion, "1" if guardar else "0"],
+                       capture_output=True, text=True, cwd=RAIZ, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def _ui_verificar(base, casos, tmp_path):
+    f = tmp_path / "casos.json"
+    f.write_text(json.dumps(casos))
+    r = subprocess.run([NODE, str(RAIZ / "frontend/test/ui_verificar.mjs"), base, str(f)],
+                       capture_output=True, text=True, cwd=RAIZ, timeout=90)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+@requiere_node
+def test_comprobante_desactivado_por_defecto_no_genera_ningun_documento(servidor):
+    base, tok = servidor
+    cid = _crear_abierta(base, tok, "Sin comprobante", creds=("ana",))
+    r = _ui_comprobante(base, cid, "ana", "si", guardar=False)
+    assert r["guardar_por_defecto"] is False                       # la casilla viene desmarcada
+    assert r["estado"].startswith("✅") and r["hecho_visible"] and not r["panel_visible"] and r["paso"] == "3"
+    assert r["bloque_comprobante_visible"] is False and r["comprobante"] is None
+
+
+@requiere_node
+def test_comprobante_opcional_se_genera_y_se_verifica_en_el_navegador(servidor, tmp_path):
+    base, tok = servidor
+    cid = _crear_abierta(base, tok, "Con comprobante", creds=("ana", "beto", "carla"))
+    comps = {}
+    for cred, op in (("ana", "si"), ("beto", "no"), ("carla", "si")):
+        r = _ui_comprobante(base, cid, cred, op, guardar=True)
+        assert r["bloque_comprobante_visible"] is True
+        c = r["comprobante"]
+        assert set(c) == {"tipo", "version", "convocatoria_id", "opcion", "r_prima", "s_prima"}   # nada más
+        assert c["convocatoria_id"] == cid and c["opcion"] == op and cred not in json.dumps(c)       # y jamás la credencial
+        comps[cred] = c
+    log_pub = _http(base, "GET", f"/convocatorias/{cid}")[1]["log_pub_hex"]
+    otra_pub = "02" + "ab" * 32
+    textos = lambda res: " | ".join(x["texto"] for x in res)
+    clases = lambda res: [x["clase"] for x in res]
+
+    # 1) antes de sellar: el voto aún no consta en ningún checkpoint (cada 20 votos por defecto)
+    res = _ui_verificar(base, [{"comprobante": comps["ana"]}], tmp_path)[0]
+    assert "aún no está sellado" in textos(res) and "ok final" not in clases(res) and "error final" not in clases(res)
+
+    # 2) sellar y verificar cada voto; con la clave del registro fijada no hay aviso de «clave del servidor»
+    assert _http(base, "POST", f"/convocatorias/{cid}/registro/sellar", None, tok)[0] == 200
+    casos = [{"comprobante": comps[c], "logpub": log_pub} for c in ("ana", "beto", "carla")]
+    for res in _ui_verificar(base, casos, tmp_path):
+        assert "ok final" in clases(res), textos(res)
+        assert "checkpoint nº 1 (3 votos sellados)" in textos(res) and "propio servidor" not in textos(res)
+    sin_fijar = _ui_verificar(base, [{"comprobante": comps["beto"]}], tmp_path)[0]
+    assert "ok final" in clases(sin_fijar) and "propio servidor" in textos(sin_fijar)               # aviso de clave no fijada
+
+    # 3) falsificaciones: clave del registro equivocada, opción cambiada, token alterado, JSON roto, formato incorrecto
+    malos = [
+        {"comprobante": comps["ana"], "logpub": otra_pub},
+        {"comprobante": {**comps["ana"], "opcion": "no"}},
+        {"comprobante": {**comps["ana"], "s_prima": "11" * 32}},
+        {"comprobante": {**comps["ana"], "convocatoria_id": "no-existe"}},
+        {"comprobante": "esto no es json"},
+        {"comprobante": {"tipo": "otra-cosa"}},
+    ]
+    for caso, res in zip(malos, _ui_verificar(base, malos, tmp_path)):
+        assert "error" in " ".join(clases(res)) and "ok final" not in clases(res), (caso, textos(res))
+    resultados = _ui_verificar(base, malos, tmp_path)
+    for i in (1, 2):                                                   # opción cambiada y s' alterado: falla ya la firma del token
+        assert resultados[i][0]["clase"] == "error" and "firma de tu token" in resultados[i][0]["texto"]
+    assert resultados[0][0]["clase"] == "ok" and resultados[0][-1]["clase"].startswith("error")       # el token es bueno; falla la clave del registro
+
+
+@requiere_node
+def test_merkle_js_coincide_con_python_y_rechaza_pruebas_falsas(tmp_path):
+    import hashlib
+    import registro as R
+    vectores, esperado = [], []
+    for n in (1, 2, 3, 5, 8, 13):
+        votos = [(bytes([2]) + hashlib.sha256(f"r{n}-{i}".encode()).digest(), hashlib.sha256(f"s{n}-{i}".encode()).digest(),
+                  ("si", "no", "sí")[i % 3]) for i in range(n)]
+        hojas = R.hojas_de_votos(votos)
+        raiz = R.raiz(hojas)
+        for i, (r, s, op) in enumerate(votos):
+            ruta = [h.hex() for h in R.camino(hojas, i)]
+            base = {"r": r.hex(), "s": s.hex(), "opcion": op, "n": n, "i": i, "camino": ruta, "raiz": raiz.hex()}
+            vectores.append(base); esperado.append((hojas[i].hex(), True))
+            vectores.append({**base, "raiz": "00" * 32}); esperado.append((hojas[i].hex(), False))              # raíz equivocada
+            vectores.append({**base, "opcion": "otra"}); esperado.append((R.hash_hoja(R.hoja_voto(r, s, "otra")).hex(), False))  # hoja alterada
+            if ruta:
+                vectores.append({**base, "camino": ruta[:-1]}); esperado.append((hojas[i].hex(), False))          # camino truncado
+                vectores.append({**base, "camino": ruta[::-1] if len(ruta) > 1 and ruta != ruta[::-1] else ruta + ["00" * 32]})
+                esperado.append((hojas[i].hex(), False))                                                         # camino desordenado/ampliado
+            if n > 1:
+                vectores.append({**base, "i": (i + 1) % n}); esperado.append((hojas[i].hex(), n == 2 and False))  # índice equivocado
+    f = tmp_path / "merkle.json"
+    f.write_text(json.dumps(vectores))
+    r = subprocess.run([NODE, str(RAIZ / "frontend/test/registro_vectores.mjs"), str(f)], capture_output=True, text=True, cwd=RAIZ)
+    assert r.returncode == 0, r.stderr
+    for v, (hoja_py, ok_py), js in zip(vectores, esperado, json.loads(r.stdout)):
+        assert js["hoja"] == hoja_py                                   # la hoja se calcula igual en JS y en Python
+        if not ok_py:
+            assert js["camino_ok"] is False, v
+        elif v["raiz"] != "00" * 32:
+            assert js["camino_ok"] is True, v

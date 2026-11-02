@@ -8,10 +8,14 @@
   <title>PAN-RAP Municipio — Votar</title>
   <link rel="stylesheet" href="estilos.css">
 </head>
-<body>
+<body data-paso="1">
   <header class="cabecera">
     <div class="marca">
-      <span class="logo" aria-hidden="true">◈</span>
+      <svg class="logo" viewBox="0 0 48 48" width="44" height="44" role="img" aria-label="PAN-RAP">
+        <circle cx="24" cy="24" r="21" class="logo-aro"/>
+        <path d="M24 9 L37 31 H11 Z" class="logo-tri"/>
+        <circle cx="24" cy="24" r="4" class="logo-nodo"/>
+      </svg>
       <div>
         <h1>PAN-RAP Municipio</h1>
         <p class="lema">Tecnosfera al servicio de la biosfera</p>
@@ -21,6 +25,12 @@
   </header>
 
   <main>
+    <ol class="pasos" aria-label="Progreso">
+      <li><span>1</span>Elige</li>
+      <li><span>2</span>Vota</li>
+      <li><span>3</span>Listo</li>
+    </ol>
+
     <p class="aviso" role="note">Prototipo: no usar en elecciones reales. La firma ciega se calcula en tu navegador y el servidor no ve tu opción al emitir el token.</p>
 
     <section class="tarjeta" id="seccion-lista" aria-labelledby="t-lista">
@@ -51,12 +61,42 @@
         <label class="mostrar"><input id="ver" type="checkbox"> Mostrar</label>
       </div>
 
+      <label class="casilla" for="guardar">
+        <input id="guardar" type="checkbox">
+        <span>Quiero un comprobante para poder verificar más tarde que mi voto consta en la urna <em>(opcional)</em></span>
+      </label>
+      <p class="ayuda cautela">Con el comprobante cualquiera que lo vea podría saber cómo votaste. Si no lo necesitas, déjalo desactivado: entonces esta página no genera ningún documento sobre tu voto.</p>
+
       <p class="pregunta">Elige tu opción</p>
       <div id="opciones" class="opciones"></div>
       <button id="reintentar" class="btn secundario" type="button" hidden>Reintentar envío</button>
     </section>
 
+    <section class="tarjeta exito" id="hecho" aria-labelledby="t-hecho" hidden>
+      <div class="sello" aria-hidden="true">✓</div>
+      <h2 id="t-hecho">Voto registrado</h2>
+      <p id="hecho-texto"></p>
+      <div id="comp-bloque" hidden>
+        <p class="ayuda cautela">Guarda el archivo en un lugar privado: demuestra cómo votaste. Para comprobarlo, usa «Comprobar mi voto» más abajo cuando se haya sellado un checkpoint.</p>
+        <a id="descargar" class="btn" download="comprobante-pan-rap.json">Descargar comprobante</a>
+      </div>
+    </section>
+
     <div id="estado" role="status" aria-live="polite">Elige una convocatoria para empezar.</div>
+
+    <section class="tarjeta" id="verificacion" aria-labelledby="t-verif">
+      <h2 id="t-verif">Comprobar mi voto</h2>
+      <p class="ayuda">¿Descargaste un comprobante? Comprueba aquí, en tu navegador, que tu voto sigue en la urna y que el servidor lo selló con su firma.</p>
+      <label for="pegado">Comprobante</label>
+      <textarea id="pegado" rows="4" spellcheck="false" placeholder="Pega aquí el contenido del archivo…"></textarea>
+      <div class="fila">
+        <input id="archivo" type="file" accept="application/json,.json">
+      </div>
+      <label for="logpub">Clave del registro anunciada <em>(opcional, recomendable)</em></label>
+      <input id="logpub" autocomplete="off" spellcheck="false" placeholder="66 caracteres hexadecimales">
+      <button id="verificar" class="btn" type="button">Comprobar</button>
+      <ul id="resultado" class="resultado" aria-live="polite"></ul>
+    </section>
   </main>
 
   <footer class="pie">

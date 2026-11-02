@@ -37,6 +37,13 @@ Qué **no** detecta ni impide:
 - **Un solo observador comprometido o inexistente**: sin archivo externo, los checkpoints solo prueban coherencia interna.
 - **Privacidad**: los checkpoints publican cuántos votos hay sellados en cada momento (participación parcial, no resultado).
 
+## Comprobante opcional del votante
+
+El votante puede pedir un comprobante (casilla **desactivada por defecto**) y comprobar en su navegador que su voto consta en un checkpoint firmado: token válido, camino de inclusión Merkle y firma ECDSA de la clave del registro. Qué implica:
+- **Protege** frente a que el servidor omita o altere un voto ya sellado, siempre que el votante fije la clave del registro anunciada antes de abrir la votación (si la toma del propio servidor, la verificación solo prueba coherencia interna).
+- **Facilita la coacción y la compra de votos**: el comprobante demuestra a un tercero cómo se votó. Sin él, el votante aún conoce `(R', s')` (están en la urna pública), pero la página no los pone a un clic. Por eso es opcional y viene desactivado.
+- No cubre votos aún sin sellar: hasta el siguiente checkpoint la verificación responde «todavía no sellado».
+
 ## Otros límites del prototipo
 
 - Las fechas de la convocatoria no se aplican; el administrador cambia el estado a mano.
